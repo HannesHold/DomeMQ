@@ -12,6 +12,7 @@ The broker runs embedded in a process, as a standalone executable, or as a Linux
 - Fixed 16-byte little-endian header and a custom binary body. Application payloads are raw bytes.
 - Optional TLS on TCP. Server keys are named pairs loaded from an environment variable or a file, and can be rotated without a restart. Local transports run unencrypted.
 - Payload limits at server, listener, channel, and per-call scope. The effective limit is the minimum of the levels that are set.
+- Queue overflow policies: reject, discard the newest, discard the oldest, or clear the channel. Message, byte, per-client, and server memory caps are separate. Crossing 80% raises a pressure event.
 - IP allow lists and block lists, including CIDR ranges, with a per-listener override and a periodic reload.
 - Configuration in `appsettings.json` or `domemq.json`, overridden by environment variables and `--config`.
 

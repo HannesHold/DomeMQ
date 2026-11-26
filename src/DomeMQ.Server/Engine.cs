@@ -31,28 +31,69 @@ internal readonly struct EngineResult
 internal sealed class BrokerEngine
 {
     private readonly DomeMqOptions _options;
-    private readonly bool _dropOldest;
+    private readonly IBrokerLogger? _logger;
+    private readonly FullPolicy _defaultPolicy;
     private readonly ChannelKind _defaultKind;
     private readonly int _globalPayload;
     private readonly int _defaultQueue;
+    private readonly long? _defaultMaxBytes;
     private readonly TimeSpan? _messageTtl;
     private readonly TimeSpan _orphanTtl;
     private readonly byte[][] _tokenHashes;
     private readonly bool _authRequired;
+    private readonly QueueAccounting _accounting;
+    private readonly Dictionary<string, ChannelLimitOverride> _overrides;
     private readonly object _gate = new();
     private readonly Dictionary<string, BrokerChannel> _channels = new(StringComparer.Ordinal);
 
-    public BrokerEngine(DomeMqOptions options)
+    public BrokerEngine(DomeMqOptions options, IBrokerLogger? logger = null)
     {
         _options = options;
-        DomeMqOptionsValidator.TryParseFullBehavior(options.Limits.FullBehavior, out _dropOldest);
+        _logger = logger;
+        _defaultPolicy = DomeMqOptionsValidator.TryParseFullPolicy(options.Limits.FullBehavior, out var policy)
+            ? policy
+            : FullPolicy.Reject;
         DomeMqOptionsValidator.TryParseChannelKind(options.Channels.DefaultType, out _defaultKind);
         _globalPayload = options.Limits.MaxPayloadSize;
-        _defaultQueue = options.Limits.MaxQueueLengthPerChannel;
+        _defaultQueue = options.Limits.MaxMessagesPerChannel;
+        _defaultMaxBytes = options.Limits.MaxBytesPerChannel;
         _messageTtl = options.Channels.DefaultMessageTtl is TimeSpan ttl && ttl > TimeSpan.Zero ? ttl : null;
         _orphanTtl = options.Channels.OrphanChannelTtl;
         _authRequired = options.Authentication.Mode.Equals("SharedKey", StringComparison.OrdinalIgnoreCase);
         _tokenHashes = options.Authentication.Tokens.Select(token => SHA256.HashData(Encoding.UTF8.GetBytes(token))).ToArray();
+        _overrides = options.Channels.Overrides
+            .Where(static item => !string.IsNullOrWhiteSpace(item.Name))
+            .GroupBy(static item => item.Name, StringComparer.Ordinal)
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        _accounting = new QueueAccounting(
+            options.Limits.MaxQueuedBytes,
+            options.Limits.MaxMessagesPerClient,
+            options.Limits.WarningPercent)
+        {
+            OnPressure = PublishPressure
+        };
+    }
+
+    internal event Action<QueuePressure>? Pressure;
+
+    internal BrokerStatistics GetStatistics()
+    {
+        var accounting = _accounting.Snapshot();
+        List<ChannelStatistics> channels;
+        lock (_gate)
+        {
+            channels = _channels.Values.Select(static channel => channel.Statistics()).ToList();
+        }
+
+        return new BrokerStatistics
+        {
+            DroppedMessages = accounting.Dropped,
+            ClearedMessages = accounting.Cleared,
+            QueuedBytes = accounting.Bytes,
+            QueuedMessages = channels.Sum(static channel => (long)channel.QueuedMessages),
+            FillPercent = accounting.FillPercent,
+            Channels = channels
+        };
     }
 
     public Func<DateTimeOffset> Clock { get; set; } = static () => DateTimeOffset.UtcNow;
@@ -111,6 +152,7 @@ internal sealed class BrokerEngine
 
     public void DropSession(Session session)
     {
+        var notices = new List<QueuePressure>();
         lock (_gate)
         {
             if (_orphanTtl <= TimeSpan.Zero)
@@ -119,7 +161,7 @@ internal sealed class BrokerEngine
                 {
                     if (_channels.TryGetValue(name, out var channel))
                     {
-                        channel.MarkRemoved();
+                        notices.AddRange(channel.RemoveAndDrain());
                         _channels.Remove(name);
                     }
                 }
@@ -138,18 +180,21 @@ internal sealed class BrokerEngine
 
             session.OwnedChannels.Clear();
         }
+
+        PublishAll(notices);
     }
 
     public void Cleanup() => Cleanup(Clock());
 
     public void Cleanup(DateTimeOffset now)
     {
+        var notices = new List<QueuePressure>();
         lock (_gate)
         {
             List<string>? remove = null;
             foreach (var (name, channel) in _channels)
             {
-                channel.DropExpired(now, _messageTtl);
+                notices.AddRange(channel.DropExpired(now, _messageTtl));
                 if (channel.OrphanDeadline is DateTimeOffset deadline && deadline <= now)
                 {
                     remove ??= [];
@@ -157,20 +202,20 @@ internal sealed class BrokerEngine
                 }
             }
 
-            if (remove is null)
+            if (remove is not null)
             {
-                return;
-            }
-
-            foreach (var name in remove)
-            {
-                if (_channels.TryGetValue(name, out var channel))
+                foreach (var name in remove)
                 {
-                    channel.MarkRemoved();
-                    _channels.Remove(name);
+                    if (_channels.TryGetValue(name, out var channel))
+                    {
+                        notices.AddRange(channel.RemoveAndDrain());
+                        _channels.Remove(name);
+                    }
                 }
             }
         }
+
+        PublishAll(notices);
     }
 
     private EngineResult HandleConnect(Session session, Frame frame)
@@ -224,12 +269,33 @@ internal sealed class BrokerEngine
             kind = (ChannelKind)body.ChannelType;
         }
 
-        if (body.MaxQueueLength > (uint)_defaultQueue)
+        _overrides.TryGetValue(body.Name, out var configured);
+        int? configuredMessages = configured?.MaxMessages;
+        int? requestedMessages = body.MaxQueueLength == 0 ? null : (int)body.MaxQueueLength;
+        if (requestedMessages > _defaultQueue)
         {
-            return Error(frame, ErrorCode.InvalidQueueLimit, "Requested queue length exceeds the server maximum.");
+            return Error(frame, ErrorCode.InvalidQueueLimit, "Requested MaxMessages exceeds the server maximum.");
         }
 
-        var queueLength = body.MaxQueueLength == 0 ? _defaultQueue : (int)body.MaxQueueLength;
+        var maxMessages = PayloadLimits.Min(_defaultQueue, configuredMessages, requestedMessages);
+        long? configuredBytes = configured?.MaxBytes ?? _defaultMaxBytes;
+        long? requestedBytes = body.MaxBytes == 0 ? null : body.MaxBytes;
+        if (_defaultMaxBytes is long globalBytes && requestedBytes > globalBytes)
+        {
+            return Error(frame, ErrorCode.InvalidByteLimit, "Requested MaxBytes exceeds the server per-channel maximum.");
+        }
+
+        if (requestedBytes > _accounting.MaxQueuedBytes)
+        {
+            return Error(frame, ErrorCode.InvalidByteLimit, "Requested MaxBytes exceeds the server memory cap.");
+        }
+
+        long? maxBytes = MinLong(_defaultMaxBytes, configured?.MaxBytes, requestedBytes);
+        if (!TryResolvePolicy(body.FullPolicy, configured, out var fullPolicy, out var policyError))
+        {
+            return Error(frame, ErrorCode.InvalidMessage, policyError);
+        }
+
         int? channelPayload = null;
         if (body.MaxPayloadSize != 0)
         {
@@ -258,7 +324,7 @@ internal sealed class BrokerEngine
                 return Error(frame, ErrorCode.TooManyChannels, "The per-client channel limit has been reached.");
             }
 
-            var channel = new BrokerChannel(body.Name, kind, queueLength, channelPayload, session.Id);
+            var channel = new BrokerChannel(body.Name, kind, maxMessages, maxBytes, fullPolicy, channelPayload, session.Id, _accounting);
             _channels.Add(body.Name, channel);
             session.OwnedChannels.Add(body.Name);
         }
@@ -266,14 +332,17 @@ internal sealed class BrokerEngine
         var ack = MessageCodec.EncodeCreateChannelAck(new CreateChannelAck(
             body.Name,
             (byte)kind,
-            (uint)queueLength,
-            (uint)(channelPayload ?? _globalPayload)));
+            (uint)maxMessages,
+            (uint)(channelPayload ?? _globalPayload),
+            (byte)fullPolicy,
+            (uint)(maxBytes ?? 0)));
         return Reply(frame, MessageType.Ack, ack);
     }
 
     private EngineResult HandleDelete(Session session, Frame frame)
     {
         var body = MessageCodec.DecodeDeleteChannel(frame.Payload.Span);
+        List<QueuePressure> drained = [];
         lock (_gate)
         {
             if (!_channels.TryGetValue(body.Name, out var channel))
@@ -286,11 +355,12 @@ internal sealed class BrokerEngine
                 return Error(frame, ErrorCode.NotChannelOwner, "Only the channel owner can delete it.");
             }
 
-            channel.MarkRemoved();
+            drained = channel.RemoveAndDrain();
             _channels.Remove(body.Name);
             session.OwnedChannels.Remove(body.Name);
         }
 
+        PublishAll(drained);
         var ack = MessageCodec.EncodeDeleteChannelAck(new DeleteChannelAck(body.Name));
         return Reply(frame, MessageType.Ack, ack);
     }
@@ -318,20 +388,16 @@ internal sealed class BrokerEngine
             return Error(frame, ErrorCode.PayloadTooLarge, $"Payload of {body.Body.Length} bytes exceeds the limit of {limit} bytes.");
         }
 
-        var accepted = channel.TryPush(
-            new StoredMessage(body.Body, body.ContentType, Clock()),
-            _dropOldest,
-            Clock(),
-            _messageTtl,
-            out var depth);
-        if (!accepted)
+        var pushed = channel.TryPush(new StoredMessage(body.Body, body.ContentType, Clock(), session.Id), Clock(), _messageTtl);
+        PublishAll(pushed.Notices ?? []);
+        if (pushed.Missing)
         {
-            if (channel.Removed)
-            {
-                return Error(frame, ErrorCode.ChannelNotFound, "Channel was not found.");
-            }
+            return Error(frame, ErrorCode.ChannelNotFound, "Channel was not found.");
+        }
 
-            return Error(frame, ErrorCode.ChannelFull, "Channel is full.");
+        if (pushed.Error is ErrorCode error)
+        {
+            return Error(frame, error, FullMessage(error));
         }
 
         if ((frame.Flags & FrameFlags.NoAck) != 0)
@@ -339,7 +405,8 @@ internal sealed class BrokerEngine
             return default;
         }
 
-        var ack = MessageCodec.EncodePushAck(new PushAck(body.ChannelName, (uint)depth));
+        var status = pushed.Discarded ? PushStatus.Discarded : PushStatus.Accepted;
+        var ack = MessageCodec.EncodePushAck(new PushAck(body.ChannelName, (uint)pushed.Depth, status));
         return Reply(frame, MessageType.Ack, ack);
     }
 
@@ -471,15 +538,101 @@ internal sealed class BrokerEngine
 
         return span.ToString();
     }
+
+    private bool TryResolvePolicy(byte requested, ChannelLimitOverride? configured, out FullPolicy policy, out string error)
+    {
+        if (requested != 0)
+        {
+            if (!Enum.IsDefined(typeof(FullPolicy), requested) || requested > (byte)FullPolicy.ClearAll)
+            {
+                policy = FullPolicy.Reject;
+                error = "Unknown full policy.";
+                return false;
+            }
+
+            policy = (FullPolicy)requested;
+            error = "";
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(configured?.FullBehavior)
+            && DomeMqOptionsValidator.TryParseFullPolicy(configured.FullBehavior, out var configuredPolicy))
+        {
+            policy = configuredPolicy;
+            error = "";
+            return true;
+        }
+
+        policy = _defaultPolicy;
+        error = "";
+        return true;
+    }
+
+    private static long? MinLong(params long?[] values)
+    {
+        long? result = null;
+        foreach (var value in values)
+        {
+            if (value is not long candidate)
+            {
+                continue;
+            }
+
+            result = result is long current ? Math.Min(current, candidate) : candidate;
+        }
+
+        return result;
+    }
+
+    private static string FullMessage(ErrorCode error) => error switch
+    {
+        ErrorCode.ServerMemoryCap => "The server queued-byte cap has been reached.",
+        ErrorCode.ClientQueueLimit => "This client has too many queued messages.",
+        ErrorCode.ChannelFull => "Channel is full.",
+        _ => "Channel is full."
+    };
+
+    private void PublishAll(IEnumerable<QueuePressure> notices)
+    {
+        foreach (var notice in notices)
+        {
+            PublishPressure(notice);
+        }
+    }
+
+    private void PublishPressure(QueuePressure notice)
+    {
+        if (notice.Warning)
+        {
+            _logger?.Log(BrokerLogLevel.Warning, "Queue", $"{notice.Scope} is {notice.FillPercent}% full.");
+        }
+
+        Pressure?.Invoke(notice);
+    }
 }
 
-internal sealed class StoredMessage(byte[] body, string contentType, DateTimeOffset enqueuedAt)
+internal sealed class StoredMessage(byte[] body, string contentType, DateTimeOffset enqueuedAt, Guid senderId)
 {
     public byte[] Body { get; } = body;
 
     public string ContentType { get; } = contentType;
 
     public DateTimeOffset EnqueuedAt { get; } = enqueuedAt;
+
+    public Guid SenderId { get; } = senderId;
+}
+
+internal readonly record struct ChannelPushResult
+{
+    public bool Missing { get; init; }
+
+    public bool Discarded { get; init; }
+
+    public ErrorCode? Error { get; init; }
+
+    public int Depth { get; init; }
+
+    public List<QueuePressure> Notices { get; init; }
 }
 
 internal readonly struct PopOutcome(bool tooLarge, List<StoredMessage> messages)
@@ -493,22 +646,42 @@ internal sealed class BrokerChannel
 {
     private readonly object _gate = new();
     private readonly LinkedList<StoredMessage> _items = new();
+    private readonly QueueAccounting _accounting;
     private TaskCompletionSource<bool>? _waiter;
+    private long _bytes;
+    private long _dropped;
+    private long _cleared;
+    private bool _warningActive;
 
-    public BrokerChannel(string name, ChannelKind kind, int maxLength, int? maxPayloadSize, Guid ownerId)
+    public BrokerChannel(
+        string name,
+        ChannelKind kind,
+        int maxMessages,
+        long? maxBytes,
+        FullPolicy fullPolicy,
+        int? maxPayloadSize,
+        Guid ownerId,
+        QueueAccounting accounting)
     {
         Name = name;
         Kind = kind;
-        MaxLength = maxLength;
+        MaxMessages = maxMessages;
+        MaxBytes = maxBytes;
+        FullPolicy = fullPolicy;
         MaxPayloadSize = maxPayloadSize;
         OwnerId = ownerId;
+        _accounting = accounting;
     }
 
     public string Name { get; }
 
     public ChannelKind Kind { get; }
 
-    public int MaxLength { get; }
+    public int MaxMessages { get; }
+
+    public long? MaxBytes { get; }
+
+    public FullPolicy FullPolicy { get; }
 
     public int? MaxPayloadSize { get; }
 
@@ -539,13 +712,46 @@ internal sealed class BrokerChannel
         }
     }
 
-    public void MarkRemoved()
+    public List<QueuePressure> RemoveAndDrain()
     {
+        var notices = new List<QueuePressure>();
         lock (_gate)
         {
             _removed = true;
             _waiter?.TrySetResult(false);
             _waiter = null;
+            _accounting.Mutate(() =>
+            {
+                while (_items.First is { } node)
+                {
+                    DetachUnlocked(node, dropped: 0, cleared: 0);
+                }
+
+                notices.AddRange(TakeNoticesUnlocked());
+            });
+        }
+
+        return notices;
+    }
+
+    public ChannelStatistics Statistics()
+    {
+        lock (_gate)
+        {
+            return new ChannelStatistics
+            {
+                Name = Name,
+                Kind = Kind,
+                FullPolicy = FullPolicy,
+                QueuedMessages = _items.Count,
+                QueuedBytes = _bytes,
+                MaxMessages = MaxMessages,
+                MaxBytes = MaxBytes,
+                FillPercent = FillPercent(),
+                DroppedMessages = _dropped,
+                ClearedMessages = _cleared,
+                WarningActive = _warningActive
+            };
         }
     }
 
@@ -557,45 +763,48 @@ internal sealed class BrokerChannel
         }
     }
 
-    public void DropExpired(DateTimeOffset now, TimeSpan? ttl)
+    public List<QueuePressure> DropExpired(DateTimeOffset now, TimeSpan? ttl)
     {
+        var notices = new List<QueuePressure>();
         lock (_gate)
         {
-            DropExpiredLocked(now, ttl);
+            _accounting.Mutate(() =>
+            {
+                DropExpiredUnlocked(now, ttl);
+                notices.AddRange(TakeNoticesUnlocked());
+            });
         }
+
+        return notices;
     }
 
-    public bool TryPush(StoredMessage message, bool dropOldest, DateTimeOffset now, TimeSpan? ttl, out int depth)
+    public ChannelPushResult TryPush(StoredMessage message, DateTimeOffset now, TimeSpan? ttl)
     {
-        TaskCompletionSource<bool>? wake;
+        TaskCompletionSource<bool>? wake = null;
+        var notices = new List<QueuePressure>();
+        ChannelPushResult result = default;
         lock (_gate)
         {
             if (Removed)
             {
-                depth = 0;
-                return false;
+                return new ChannelPushResult { Missing = true, Notices = notices };
             }
 
-            DropExpiredLocked(now, ttl);
-            if (_items.Count >= MaxLength)
+            _accounting.Mutate(() =>
             {
-                if (!dropOldest || _items.First is null)
+                DropExpiredUnlocked(now, ttl);
+                result = ApplyPolicyUnlocked(message);
+                notices.AddRange(TakeNoticesUnlocked());
+                if (result.Error is null && !result.Discarded)
                 {
-                    depth = _items.Count;
-                    return false;
+                    wake = _waiter;
+                    _waiter = null;
                 }
-
-                _items.RemoveFirst();
-            }
-
-            _items.AddLast(message);
-            depth = _items.Count;
-            wake = _waiter;
-            _waiter = null;
+            });
         }
 
         wake?.TrySetResult(true);
-        return true;
+        return result with { Notices = notices };
     }
 
     public async ValueTask<PopOutcome> PopAsync(
@@ -608,21 +817,40 @@ internal sealed class BrokerChannel
         CancellationToken cancellationToken)
     {
         TaskCompletionSource<bool>? waiter = null;
+        var firstNotices = new List<QueuePressure>();
+        PopOutcome immediate = default;
+        var finished = false;
         lock (_gate)
         {
-            var immediate = TakeLocked(maxMessages, payloadLimit, frameBudget, clock(), ttl);
+            _accounting.Mutate(() =>
+            {
+                immediate = TakeLocked(maxMessages, payloadLimit, frameBudget, clock(), ttl);
+                firstNotices.AddRange(TakeNoticesUnlocked());
+            });
             if (immediate.TooLarge || immediate.Messages.Count > 0 || timeout <= TimeSpan.Zero || Removed)
             {
-                return immediate;
+                finished = true;
             }
+            else
+            {
+                waiter = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _waiter = waiter;
+            }
+        }
 
-            waiter = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            _waiter = waiter;
+        foreach (var notice in firstNotices)
+        {
+            _accounting.Publish(notice);
+        }
+
+        if (finished)
+        {
+            return immediate;
         }
 
         try
         {
-            await waiter.Task.WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
+            await waiter!.Task.WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
         }
         catch (TimeoutException)
         {
@@ -638,15 +866,28 @@ internal sealed class BrokerChannel
             }
         }
 
+        var secondNotices = new List<QueuePressure>();
+        PopOutcome outcome = default;
         lock (_gate)
         {
-            return TakeLocked(maxMessages, payloadLimit, frameBudget, clock(), ttl);
+            _accounting.Mutate(() =>
+            {
+                outcome = TakeLocked(maxMessages, payloadLimit, frameBudget, clock(), ttl);
+                secondNotices.AddRange(TakeNoticesUnlocked());
+            });
         }
+
+        foreach (var notice in secondNotices)
+        {
+            _accounting.Publish(notice);
+        }
+
+        return outcome;
     }
 
     private PopOutcome TakeLocked(int maxMessages, int payloadLimit, int frameBudget, DateTimeOffset now, TimeSpan? ttl)
     {
-        DropExpiredLocked(now, ttl);
+        DropExpiredUnlocked(now, ttl);
         var taken = new List<StoredMessage>();
         var used = 1 + ProtocolEncodingSize(Name) + 4;
         if (Kind == ChannelKind.Bag)
@@ -668,9 +909,9 @@ internal sealed class BrokerChannel
                 }
 
                 used += MessageSize(node.Value);
-                taken.Add(node.Value);
-                _items.Remove(node);
-                node = previous;
+            taken.Add(node.Value);
+            DetachUnlocked(node, dropped: 0, cleared: 0);
+            node = previous;
             }
 
             if (taken.Count == 0 && skippedOversized)
@@ -708,13 +949,13 @@ internal sealed class BrokerChannel
 
             used += size;
             taken.Add(node.Value);
-            _items.Remove(node);
+            DetachUnlocked(node, dropped: 0, cleared: 0);
         }
 
         return new PopOutcome(false, taken);
     }
 
-    private void DropExpiredLocked(DateTimeOffset now, TimeSpan? ttl)
+    private void DropExpiredUnlocked(DateTimeOffset now, TimeSpan? ttl)
     {
         if (ttl is null)
         {
@@ -723,8 +964,173 @@ internal sealed class BrokerChannel
 
         while (_items.First is { } node && now - node.Value.EnqueuedAt >= ttl.Value)
         {
-            _items.RemoveFirst();
+            DetachUnlocked(node, dropped: 0, cleared: 0);
         }
+    }
+
+    private ChannelPushResult ApplyPolicyUnlocked(StoredMessage message)
+    {
+        var incoming = message.Body.Length;
+        if (Fits(message.SenderId, incoming, removeBytes: 0, removeSenderMessages: 0, removeCount: 0))
+        {
+            AcceptUnlocked(message);
+            return new ChannelPushResult { Depth = _items.Count };
+        }
+
+        switch (FullPolicy)
+        {
+            case FullPolicy.DiscardNewest:
+                _dropped++;
+                _accounting.NoteDroppedUnlocked(1);
+                return new ChannelPushResult { Discarded = true, Depth = _items.Count };
+            case FullPolicy.DiscardOldest:
+            {
+                var removed = new List<LinkedListNode<StoredMessage>>();
+                var freedBytes = 0;
+                var freedSender = 0;
+                var node = _items.First;
+                while (node is not null && !Fits(message.SenderId, incoming, freedBytes, freedSender, removed.Count))
+                {
+                    removed.Add(node);
+                    freedBytes += node.Value.Body.Length;
+                    if (node.Value.SenderId == message.SenderId)
+                    {
+                        freedSender++;
+                    }
+
+                    node = node.Next;
+                }
+
+                if (!Fits(message.SenderId, incoming, freedBytes, freedSender, removed.Count))
+                {
+                    return new ChannelPushResult { Error = Rejection(message.SenderId, incoming), Depth = _items.Count };
+                }
+
+                foreach (var item in removed)
+                {
+                    DetachUnlocked(item, dropped: 1, cleared: 0);
+                }
+
+                AcceptUnlocked(message);
+                return new ChannelPushResult { Depth = _items.Count };
+            }
+            case FullPolicy.ClearAll:
+            {
+                var freedBytes = (int)_bytes;
+                var freedSender = _items.Count(item => item.SenderId == message.SenderId);
+                if (!Fits(message.SenderId, incoming, freedBytes, freedSender, _items.Count))
+                {
+                    return new ChannelPushResult { Error = Rejection(message.SenderId, incoming), Depth = _items.Count };
+                }
+
+                while (_items.First is { } first)
+                {
+                    DetachUnlocked(first, dropped: 0, cleared: 1);
+                }
+
+                AcceptUnlocked(message);
+                return new ChannelPushResult { Depth = _items.Count };
+            }
+            default:
+                return new ChannelPushResult { Error = Rejection(message.SenderId, incoming), Depth = _items.Count };
+        }
+    }
+
+    private bool Fits(Guid sender, int incoming, int removeBytes, int removeSenderMessages, int removeCount)
+    {
+        if (_items.Count - removeCount + 1 > MaxMessages)
+        {
+            return false;
+        }
+
+        if (MaxBytes is long cap && _bytes - removeBytes + incoming > cap)
+        {
+            return false;
+        }
+
+        return _accounting.FitsUnlocked(sender, 1 - removeSenderMessages, incoming - removeBytes);
+    }
+
+    private ErrorCode Rejection(Guid sender, int incoming)
+    {
+        if (MaxBytes is long cap && incoming > cap)
+        {
+            return ErrorCode.ChannelFull;
+        }
+
+        if (_items.Count + 1 > MaxMessages && FullPolicy == FullPolicy.Reject)
+        {
+            return ErrorCode.ChannelFull;
+        }
+
+        var account = _accounting.RejectionUnlocked(sender, 1, incoming);
+        if (account != ErrorCode.ChannelFull)
+        {
+            return account;
+        }
+
+        if (MaxBytes is long && _bytes + incoming > MaxBytes)
+        {
+            return ErrorCode.ChannelFull;
+        }
+
+        return ErrorCode.ChannelFull;
+    }
+
+    private void AcceptUnlocked(StoredMessage message)
+    {
+        _items.AddLast(message);
+        _bytes += message.Body.Length;
+        _accounting.AddUnlocked(message.SenderId, message.Body.Length);
+    }
+
+    private void DetachUnlocked(LinkedListNode<StoredMessage> node, int dropped, int cleared)
+    {
+        var message = node.Value;
+        _items.Remove(node);
+        _bytes -= message.Body.Length;
+        _dropped += dropped;
+        _cleared += cleared;
+        _accounting.ReleaseUnlocked(message.SenderId, message.Body.Length, dropped, cleared);
+    }
+
+    private int FillPercent()
+    {
+        var messages = MaxMessages <= 0 ? 0 : (int)Math.Min(100, _items.Count * 100L / MaxMessages);
+        var bytes = MaxBytes is long cap && cap > 0 ? (int)Math.Min(100, _bytes * 100 / cap) : 0;
+        return Math.Max(messages, bytes);
+    }
+
+    private List<QueuePressure> TakeNoticesUnlocked()
+    {
+        var notices = new List<QueuePressure>();
+        var fill = FillPercent();
+        if (fill >= _accounting.WarningPercent)
+        {
+            if (!_warningActive)
+            {
+                _warningActive = true;
+                var snapshot = _accounting.SnapshotUnlocked();
+                notices.Add(new QueuePressure
+                {
+                    Scope = Name,
+                    FillPercent = fill,
+                    Warning = true,
+                    DroppedMessages = _dropped,
+                    ClearedMessages = _cleared,
+                    QueuedMessages = _items.Count,
+                    QueuedBytes = _bytes
+                });
+                _ = snapshot;
+            }
+        }
+        else
+        {
+            _warningActive = false;
+        }
+
+        notices.AddRange(_accounting.DrainNoticesUnlocked());
+        return notices;
     }
 
     private static bool Fits(StoredMessage message, int payloadLimit, int frameBudget, int used) =>

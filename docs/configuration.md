@@ -64,8 +64,12 @@ Oversize frames are rejected before the body buffer is allocated, logged, and th
 | `Limits.MaxChannelsPerClient` | 1024 |
 | `Limits.MaxChannels` | 10000 |
 | `Limits.MaxPayloadSize` | 16777216 |
-| `Limits.MaxQueueLengthPerChannel` | 100000 |
+| `Limits.MaxMessagesPerChannel` | 100000 |
+| `Limits.MaxBytesPerChannel` | null (no per-channel byte cap) |
+| `Limits.MaxQueuedBytes` | 1073741824 (1 GiB) |
+| `Limits.MaxMessagesPerClient` | 1000000 |
 | `Limits.FullBehavior` | `Reject` |
+| `Limits.WarningPercent` | 80 |
 | `Tcp.NoDelay` | true |
 | `Tcp.KeepAlive` | true |
 | `Tcp.KeepAliveTimeSeconds` | 60 |
@@ -133,8 +137,12 @@ An embedded `new DomeMqOptions()` starts with an empty listener list. `DomeMqOpt
 | `MaxChannelsPerClient` | Channels one connection may create. |
 | `MaxChannels` | Channels in the process. |
 | `MaxPayloadSize` | Global application-payload ceiling. See precedence above. |
-| `MaxQueueLengthPerChannel` | Default and maximum queue length. `CreateChannel` may request less. More is `InvalidQueueLimit`. |
-| `FullBehavior` | `Reject` (error `ChannelFull`) or `DropOldest` (discard the oldest message, then accept). |
+| `MaxMessagesPerChannel` | Global maximum queued messages in one channel. `MaxQueueLengthPerChannel` is an older name for the same value. A create request may set a lower cap. A request above this value is `InvalidQueueLimit`. The effective cap is the minimum of this value, a `Channels.Overrides` entry, and the request. |
+| `MaxBytesPerChannel` | Optional byte cap for one channel. Null means no per-channel byte cap. A create request above it is `InvalidByteLimit`. |
+| `MaxQueuedBytes` | Total queued application bytes on the server. Default 1 GiB. |
+| `MaxMessagesPerClient` | Messages one client has pushed that are still queued. Default 1000000. |
+| `FullBehavior` | `Reject` (default), `DiscardNewest`, `DiscardOldest` (alias `DropOldest`), or `ClearAll`. See the protocol spec for queue, stack, and bag eviction. |
+| `WarningPercent` | Log and raise `QueuePressure` once each time a channel, the memory cap, or a client crosses this fill percentage. Default 80. The event carries dropped count, cleared count, and fill level for a later GUI. |
 
 ## TLS keys
 
@@ -268,6 +276,7 @@ The client library has its own `HeartbeatInterval` (default 30 seconds), `Reques
 | `DefaultMessageTtl` | null | Null or zero: messages never expire. Otherwise a time span such as `"00:05:00"`. Expired messages are dropped on push, pop, and during cleanup. Maximum 30 days. |
 | `OrphanChannelTtl` | 5 minutes | How long a channel remains after its owner disconnects. |
 | `CleanupInterval` | 30 seconds | Scan interval. Must be positive when `OrphanChannelTtl` is positive, or orphaned channels would never be removed. Zero disables the background scan. Message expiry still happens on push and pop. |
+| `Overrides` | empty | Named channel limits. `MaxMessages`, `MaxBytes`, and `FullBehavior` are optional. Numeric effective limits are the minimum of the global value, the override, and the create request. |
 
 ## Logging
 

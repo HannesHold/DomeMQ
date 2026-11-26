@@ -48,7 +48,27 @@ public enum ErrorCode : ushort
     TooManyChannels = 13,
     TooManyClients = 14,
     InvalidPayloadLimit = 15,
-    InvalidQueueLimit = 16
+    InvalidQueueLimit = 16,
+    ClientQueueLimit = 17,
+    ServerMemoryCap = 18,
+    InvalidByteLimit = 19
+}
+
+/// <summary>What the server does when a queue limit is hit. Zero on the wire means inherit the server default.</summary>
+public enum FullPolicy : byte
+{
+    Inherit = 0,
+    Reject = 1,
+    DiscardNewest = 2,
+    DiscardOldest = 3,
+    ClearAll = 4
+}
+
+/// <summary>Status byte appended to a push acknowledgement.</summary>
+public static class PushStatus
+{
+    public const byte Accepted = 0;
+    public const byte Discarded = 1;
 }
 
 /// <summary>Reason codes carried by <c>Disconnect</c>.</summary>

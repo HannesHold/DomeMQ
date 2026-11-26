@@ -55,7 +55,9 @@ public sealed class DomeMqClient : IAsyncDisposable
             name,
             (byte)kind,
             (uint)(options?.MaxQueueLength ?? 0),
-            (uint)(options?.MaxPayloadSize ?? 0)));
+            (uint)(options?.MaxPayloadSize ?? 0),
+            (byte)(options?.FullPolicy ?? FullPolicy.Inherit),
+            (uint)(options?.MaxBytes ?? 0)));
         var frame = await RequestAsync(MessageType.CreateChannel, body, FrameFlags.None, cancellationToken).ConfigureAwait(false);
         var ack = MessageCodec.DecodeCreateChannelAck(frame.Payload.Span);
         _channelLimits[ack.Name] = (int)ack.MaxPayloadSize;
@@ -64,7 +66,9 @@ public sealed class DomeMqClient : IAsyncDisposable
             Name = ack.Name,
             Kind = (ChannelKind)ack.ChannelType,
             MaxQueueLength = (int)ack.MaxQueueLength,
-            MaxPayloadSize = (int)ack.MaxPayloadSize
+            MaxPayloadSize = (int)ack.MaxPayloadSize,
+            FullPolicy = (FullPolicy)ack.FullPolicy,
+            MaxBytes = ack.MaxBytes
         };
     }
 
@@ -76,14 +80,14 @@ public sealed class DomeMqClient : IAsyncDisposable
         _channelLimits.TryRemove(name, out _);
     }
 
-    public Task PushAsync(
+    public Task<PushResult> PushAsync(
         string channel,
         byte[] body,
         PushOptions? options = null,
         CancellationToken cancellationToken = default) =>
         PushAsync(channel, (ReadOnlyMemory<byte>)body, options, cancellationToken);
 
-    public Task PushAsync(
+    public async Task<PushResult> PushAsync(
         string channel,
         ReadOnlyMemory<byte> body,
         PushOptions? options = null,
@@ -98,13 +102,16 @@ public sealed class DomeMqClient : IAsyncDisposable
         var flags = options?.NoAck == true ? FrameFlags.NoAck : FrameFlags.None;
         if (options?.NoAck == true)
         {
-            return SendOnlyAsync(MessageType.Push, payload, flags, cancellationToken);
+            await SendOnlyAsync(MessageType.Push, payload, flags, cancellationToken).ConfigureAwait(false);
+            return new PushResult(false, 0);
         }
 
-        return RequestAsync(MessageType.Push, payload, flags, cancellationToken);
+        var frame = await RequestAsync(MessageType.Push, payload, flags, cancellationToken).ConfigureAwait(false);
+        var ack = MessageCodec.DecodePushAck(frame.Payload.Span);
+        return new PushResult(ack.Status == PushStatus.Discarded, (int)ack.Depth);
     }
 
-    public Task PushAsync<TPayload>(
+    public Task<PushResult> PushAsync<TPayload>(
         string channel,
         TPayload payload,
         PushOptions? options = null,
@@ -115,7 +122,7 @@ public sealed class DomeMqClient : IAsyncDisposable
         return PushAsync(channel, Materialize(payload), options, cancellationToken);
     }
 
-    public Task PushAsync<T>(
+    public Task<PushResult> PushAsync<T>(
         string channel,
         T value,
         IPayloadSerializer<T> serializer,

@@ -17,6 +17,7 @@ public static class DomeMqOptionsValidator
         options.Authentication ??= new AuthenticationOptions();
         options.Unix ??= new UnixOptions();
         options.Channels ??= new ChannelOptions();
+        options.Channels.Overrides ??= [];
         options.Health ??= new HealthOptions();
         options.IpAccess ??= new IpAccessOptions();
         options.Logging ??= new LoggingOptions();
@@ -69,7 +70,7 @@ public static class DomeMqOptionsValidator
         ValidateLimits(options.Limits, errors);
         ValidateTimeouts(options.Timeouts, errors);
         ValidateAuthentication(options.Authentication, errors);
-        ValidateChannels(options.Channels, errors);
+        ValidateChannels(options.Channels, options.Limits, errors);
         ValidateLogging(options.Logging, errors);
         ValidateIp(options.IpAccess, "IpAccess", errors);
         ValidateUnixMode(options.Unix.Permissions, "Unix.Permissions", errors);
@@ -151,21 +152,47 @@ public static class DomeMqOptionsValidator
         }
     }
 
+    public static bool TryParseFullPolicy(string text, out FullPolicy policy)
+    {
+        if (text.Equals("Reject", StringComparison.OrdinalIgnoreCase))
+        {
+            policy = FullPolicy.Reject;
+            return true;
+        }
+
+        if (text.Equals("DiscardNewest", StringComparison.OrdinalIgnoreCase))
+        {
+            policy = FullPolicy.DiscardNewest;
+            return true;
+        }
+
+        if (text.Equals("DiscardOldest", StringComparison.OrdinalIgnoreCase)
+            || text.Equals("DropOldest", StringComparison.OrdinalIgnoreCase))
+        {
+            policy = FullPolicy.DiscardOldest;
+            return true;
+        }
+
+        if (text.Equals("ClearAll", StringComparison.OrdinalIgnoreCase))
+        {
+            policy = FullPolicy.ClearAll;
+            return true;
+        }
+
+        policy = FullPolicy.Reject;
+        return false;
+    }
+
     public static bool TryParseFullBehavior(string text, out bool dropOldest)
     {
         dropOldest = false;
-        if (text.Equals("Reject", StringComparison.OrdinalIgnoreCase))
+        if (!TryParseFullPolicy(text, out var policy))
         {
-            return true;
+            return false;
         }
 
-        if (text.Equals("DropOldest", StringComparison.OrdinalIgnoreCase))
-        {
-            dropOldest = true;
-            return true;
-        }
-
-        return false;
+        dropOldest = policy == FullPolicy.DiscardOldest;
+        return true;
     }
 
     public static bool TryParseChannelKind(string text, out ChannelKind kind)
@@ -265,9 +292,34 @@ public static class DomeMqOptionsValidator
             errors.Add("Limits.MaxChannelsPerClient cannot exceed Limits.MaxChannels.");
         }
 
-        if (limits.MaxQueueLengthPerChannel < 1)
+        if (limits.MaxMessagesPerChannel < 1)
         {
-            errors.Add("Limits.MaxQueueLengthPerChannel must be at least 1.");
+            errors.Add("Limits.MaxMessagesPerChannel must be at least 1.");
+        }
+
+        if (limits.MaxBytesPerChannel is long perChannel && perChannel < 1)
+        {
+            errors.Add("Limits.MaxBytesPerChannel must be at least 1 when it is set.");
+        }
+
+        if (limits.MaxQueuedBytes < 1)
+        {
+            errors.Add("Limits.MaxQueuedBytes must be at least 1.");
+        }
+
+        if (limits.MaxBytesPerChannel is long channelBytes && channelBytes > limits.MaxQueuedBytes)
+        {
+            errors.Add("Limits.MaxBytesPerChannel cannot exceed Limits.MaxQueuedBytes.");
+        }
+
+        if (limits.MaxMessagesPerClient < 1)
+        {
+            errors.Add("Limits.MaxMessagesPerClient must be at least 1.");
+        }
+
+        if (limits.WarningPercent is < 1 or > 100)
+        {
+            errors.Add("Limits.WarningPercent must be between 1 and 100.");
         }
 
         if (limits.MaxPayloadSize < 1 || limits.MaxPayloadSize > ProtocolConstants.MaxConfigurablePayload)
@@ -275,9 +327,9 @@ public static class DomeMqOptionsValidator
             errors.Add($"Limits.MaxPayloadSize must be between 1 and {ProtocolConstants.MaxConfigurablePayload}.");
         }
 
-        if (!TryParseFullBehavior(limits.FullBehavior, out _))
+        if (!TryParseFullPolicy(limits.FullBehavior, out _))
         {
-            errors.Add("Limits.FullBehavior must be Reject or DropOldest.");
+            errors.Add("Limits.FullBehavior must be Reject, DiscardNewest, DiscardOldest, or ClearAll.");
         }
     }
 
@@ -328,7 +380,7 @@ public static class DomeMqOptionsValidator
         }
     }
 
-    private static void ValidateChannels(ChannelOptions channels, List<string> errors)
+    private static void ValidateChannels(ChannelOptions channels, LimitOptions limits, List<string> errors)
     {
         if (channels.DefaultMessageTtl is TimeSpan ttl && (ttl < TimeSpan.Zero || ttl > TimeSpan.FromDays(30)))
         {
@@ -343,6 +395,45 @@ public static class DomeMqOptionsValidator
         if (channels.CleanupInterval < TimeSpan.Zero || channels.CleanupInterval > TimeSpan.FromDays(1))
         {
             errors.Add("Channels.CleanupInterval must be between zero and 1 day.");
+        }
+
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i < channels.Overrides.Count; i++)
+        {
+            var item = channels.Overrides[i];
+            if (item is null || string.IsNullOrWhiteSpace(item.Name))
+            {
+                errors.Add($"Channels.Overrides[{i}].Name is required.");
+                continue;
+            }
+
+            if (!names.Add(item.Name))
+            {
+                errors.Add($"Channels.Overrides contains a duplicate name '{item.Name}'.");
+            }
+
+            if (item.MaxMessages is int messages && (messages < 1 || messages > limits.MaxMessagesPerChannel))
+            {
+                errors.Add($"Channels.Overrides '{item.Name}' MaxMessages must be between 1 and Limits.MaxMessagesPerChannel.");
+            }
+
+            if (item.MaxBytes is long bytes)
+            {
+                if (bytes < 1 || bytes > limits.MaxQueuedBytes)
+                {
+                    errors.Add($"Channels.Overrides '{item.Name}' MaxBytes must be between 1 and Limits.MaxQueuedBytes.");
+                }
+
+                if (limits.MaxBytesPerChannel is long cap && bytes > cap)
+                {
+                    errors.Add($"Channels.Overrides '{item.Name}' MaxBytes cannot exceed Limits.MaxBytesPerChannel.");
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(item.FullBehavior) && !TryParseFullPolicy(item.FullBehavior, out _))
+            {
+                errors.Add($"Channels.Overrides '{item.Name}' FullBehavior must be Reject, DiscardNewest, DiscardOldest, or ClearAll.");
+            }
         }
     }
 

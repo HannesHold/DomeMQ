@@ -93,7 +93,15 @@ public sealed class CreateChannelOptions
 
     /// <summary>Null inherits the server global limit. A value above the server global limit is rejected.</summary>
     public int? MaxPayloadSize { get; set; }
+
+    /// <summary>Null inherits the server full policy.</summary>
+    public FullPolicy? FullPolicy { get; set; }
+
+    /// <summary>Null inherits the server per-channel byte cap. A value above the server cap is rejected.</summary>
+    public int? MaxBytes { get; set; }
 }
+
+public readonly record struct PushResult(bool Discarded, int Depth);
 
 public sealed class ChannelInfo
 {
@@ -104,6 +112,10 @@ public sealed class ChannelInfo
     public required int MaxQueueLength { get; init; }
 
     public required int MaxPayloadSize { get; init; }
+
+    public FullPolicy FullPolicy { get; init; }
+
+    public long MaxBytes { get; init; }
 }
 
 /// <summary>One popped application message. <see cref="Body"/> is opaque.</summary>

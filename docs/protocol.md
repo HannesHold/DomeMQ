@@ -126,9 +126,20 @@ A channel is a named buffer owned by the connection that created it.
 
 Anyone connected may `Push`. Only the owner may `Pop` or `DeleteChannel`. When the owner disconnects, the channel stays until `OrphanChannelTtl` (default 5 minutes) and is then deleted. `OrphanChannelTtl` of zero deletes it immediately. Pushes are still accepted while it is orphaned. Pops fail with `NotChannelOwner` because the owner is gone.
 
-`maxQueueLength` of `0` on `CreateChannel` means the server default (`MaxQueueLengthPerChannel`, default 100000). A requested length above that maximum is `InvalidQueueLimit` and the channel is not created. The server does not clamp it.
+`maxMessages` (`maxQueueLength` in older wording) of `0` means inherit. The effective cap is the minimum of the server global maximum (default 100000), a configured per-name override, and the non-zero request. A request above the global maximum is `InvalidQueueLimit`. The server does not clamp it.
 
-When a channel is full, the server either rejects the push with `ChannelFull` or drops the oldest message and accepts the new one. That policy is server configuration (`Reject` or `DropOldest`), not a field on the wire.
+`maxBytes` of `0` means inherit. The effective byte cap is the minimum of the set levels (global per-channel cap, configured override, request). A request above the global per-channel cap or the server memory cap is `InvalidByteLimit`.
+
+When a push would pass one of those caps, the per-client outstanding-message cap, or the server-wide queued-byte cap, the channel's full policy decides:
+
+| Policy | Value | Effect |
+| --- | ---: | --- |
+| `Reject` | 1 | The message is not stored. The sender gets `ChannelFull`, `ClientQueueLimit`, or `ServerMemoryCap`. |
+| `DiscardNewest` | 2 | The incoming message is dropped. The channel is unchanged. The ack status is `Discarded` (1). |
+| `DiscardOldest` | 3 | Evict the oldest entry until the new message fits, then store it. Queue evicts the head. Stack evicts the bottom. Bag evicts the oldest insert. Ack status is `Accepted`. |
+| `ClearAll` | 4 | If the new message fits after the channel is emptied, remove every queued message and store the new one. Ack status is `Accepted`. |
+
+Eviction only removes messages from the target channel. A message that cannot fit even after that (it is larger than the byte cap, or the sender's quota is held by other channels) is rejected and the channel is left unchanged. `ClearAll` does not clear when the new message still would not fit.
 
 ## Application payloads
 
@@ -196,8 +207,12 @@ The first frame on a connection must be `Connect`. Any other type is `NotConnect
 | ---: | --- | --- | --- |
 | 0 | `name` | string | |
 | 1 | `channelType` | uint8 | 0, 1, 2, or 3. |
-| 2 | `maxQueueLength` | uint32 | 0 = server default. |
+| 2 | `maxMessages` | uint32 | 0 = inherit. This is the per-channel message cap. A non-zero value above the server global maximum is rejected. |
 | 3 | `maxPayloadSize` | uint32 | 0 = inherit the global limit. |
+| 4 | `fullPolicy` | uint8 | Optional. Omitted or 0 inherits the server policy. 1 Reject, 2 DiscardNewest, 3 DiscardOldest, 4 ClearAll. |
+| 5 | `maxBytes` | uint32 | Optional. 0 inherits. A non-zero value above the server per-channel or memory cap is rejected. |
+
+Fields 4 and 5 are appended. A decoder that stops after field 3 still accepts a longer body. A new decoder treats a missing tail as policy 0 and maxBytes 0.
 
 Creating a name that already exists is `ChannelExists`, including when the same owner asks twice.
 
@@ -210,8 +225,10 @@ Creating a name that already exists is `ChannelExists`, including when the same 
 | 0 | `ackedType` | uint8 | `3` |
 | 1 | `name` | string | |
 | 2 | `channelType` | uint8 | Resolved kind, never 0. |
-| 3 | `maxQueueLength` | uint32 | Effective length. |
+| 3 | `maxMessages` | uint32 | Effective message cap. Never 0. |
 | 4 | `maxPayloadSize` | uint32 | Channel cap, or the global limit when the request inherited it. Never 0. |
+| 5 | `fullPolicy` | uint8 | Optional. Resolved policy, never 0 when the server sends it. |
+| 6 | `maxBytes` | uint32 | Optional. Effective byte cap, or 0 when the channel has none. |
 
 ### DeleteChannel (4)
 
@@ -242,6 +259,7 @@ Creating a name that already exists is `ChannelExists`, including when the same 
 | 0 | `ackedType` | uint8 | `5` |
 | 1 | `channelName` | string | |
 | 2 | `depth` | uint32 | Messages in the channel after the push. |
+| 3 | `status` | uint8 | Optional. 0 Accepted (or omitted). 1 Discarded: `DiscardNewest` dropped the incoming message and left the channel unchanged. |
 
 ### Pop (6)
 
@@ -315,7 +333,10 @@ Either side may send `Ping`. The reference client answers `Ping` with `Pong` and
 | 13 | `TooManyChannels` | Server or per-client channel limit. |
 | 14 | `TooManyClients` | Reserved for a protocol-level refusal. The reference server closes extra connections before handshake instead. |
 | 15 | `InvalidPayloadLimit` | `CreateChannel.maxPayloadSize` is greater than the server global limit. |
-| 16 | `InvalidQueueLimit` | `CreateChannel.maxQueueLength` is greater than the server maximum. |
+| 16 | `InvalidQueueLimit` | `CreateChannel.maxMessages` is greater than the server maximum. |
+| 17 | `ClientQueueLimit` | The sender already has too many unconsumed queued messages. |
+| 18 | `ServerMemoryCap` | Queued application bytes would exceed the server memory cap. |
+| 19 | `InvalidByteLimit` | `CreateChannel.maxBytes` is greater than the server per-channel or memory cap. |
 
 ## Connection flow
 
@@ -401,7 +422,9 @@ Logical contents:
 | --- | --- |
 | `connect` | Request id 1. Name `demo`, version 1, empty token. |
 | `hello` | Request id 1. Server `DomeMQ`, version 1, session `0123456789abcdef0123456789abcdef`, max payload 16777216, max queue 100000, default type Queue (1). |
-| `create-channel` | Request id 2. Name `orders`, type Queue, queue length 0 (inherit), payload limit 0 (inherit). |
+| `create-channel` | Request id 2. Name `orders`, type Queue, message cap 0 (inherit), payload limit 0 (inherit). The policy and byte-cap tail is omitted. |
+| `create-channel-limits` | Request id 2. Same channel, plus policy DiscardOldest (3) and maxBytes 4096. |
+| `push-ack-discarded` | Request id 4. Push ack for `orders`, depth 2, status Discarded (1). |
 | `create-channel-ack` | Request id 2. Effective queue length 100000, effective payload limit 16777216. |
 | `delete-channel` | Request id 3. Name `orders`. |
 | `push-raw` | Request id 4. Channel `orders`, inherited limit, empty content type, body `hello` (`68 65 6c 6c 6f`). |
@@ -432,10 +455,22 @@ Logical contents:
 44 4d 51 01 01 03 00 00 02 00 00 00 11 00 00 00 06 00 6f 72 64 65 72 73 01 00 00 00 00 00 00 00 00
 ```
 
+### create-channel-limits
+
+```hex
+44 4d 51 01 01 03 00 00 02 00 00 00 16 00 00 00 06 00 6f 72 64 65 72 73 01 00 00 00 00 00 00 00 00 03 00 10 00 00
+```
+
 ### create-channel-ack
 
 ```hex
 44 4d 51 01 01 07 00 00 02 00 00 00 12 00 00 00 03 06 00 6f 72 64 65 72 73 01 a0 86 01 00 00 00 00 01
+```
+
+### push-ack-discarded
+
+```hex
+44 4d 51 01 01 07 00 00 04 00 00 00 0e 00 00 00 05 06 00 6f 72 64 65 72 73 02 00 00 00 01
 ```
 
 ### delete-channel

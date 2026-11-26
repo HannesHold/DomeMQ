@@ -10,7 +10,11 @@ public static class DomeMqDefaults
     public const int MaxChannelsPerClient = 1024;
     public const int MaxChannels = 10_000;
     public const int MaxPayloadSize = 16 * 1024 * 1024;
-    public const int MaxQueueLengthPerChannel = 100_000;
+    public const int MaxMessagesPerChannel = 100_000;
+    public const int MaxQueueLengthPerChannel = MaxMessagesPerChannel;
+    public const long MaxQueuedBytes = 1024L * 1024L * 1024L;
+    public const int MaxMessagesPerClient = 1_000_000;
+    public const int WarningPercent = 80;
     public const string FullBehavior = "Reject";
     public const int SocketBufferSize = 256 * 1024;
     public const int Backlog = 512;
@@ -147,10 +151,30 @@ public sealed class LimitOptions
     /// <summary>Hard upper bound on one application payload, in bytes. Default is 16 MiB.</summary>
     public int MaxPayloadSize { get; set; } = DomeMqDefaults.MaxPayloadSize;
 
-    public int MaxQueueLengthPerChannel { get; set; } = DomeMqDefaults.MaxQueueLengthPerChannel;
+    /// <summary>Global maximum queued messages in one channel. Default is 100000.</summary>
+    public int MaxMessagesPerChannel { get; set; } = DomeMqDefaults.MaxMessagesPerChannel;
 
-    /// <summary><c>Reject</c> or <c>DropOldest</c>.</summary>
+    /// <summary>Earlier name for <see cref="MaxMessagesPerChannel"/>. Setting either property updates the same limit.</summary>
+    public int MaxQueueLengthPerChannel
+    {
+        get => MaxMessagesPerChannel;
+        set => MaxMessagesPerChannel = value;
+    }
+
+    /// <summary>Optional per-channel byte cap. Null means no per-channel byte cap.</summary>
+    public long? MaxBytesPerChannel { get; set; }
+
+    /// <summary>Total queued application bytes across every channel. Default is 1 GiB.</summary>
+    public long MaxQueuedBytes { get; set; } = DomeMqDefaults.MaxQueuedBytes;
+
+    /// <summary>Queued messages one client has pushed and that nobody has consumed yet. Default is 1000000.</summary>
+    public int MaxMessagesPerClient { get; set; } = DomeMqDefaults.MaxMessagesPerClient;
+
+    /// <summary><c>Reject</c>, <c>DiscardNewest</c>, <c>DiscardOldest</c> (<c>DropOldest</c>), or <c>ClearAll</c>.</summary>
     public string FullBehavior { get; set; } = DomeMqDefaults.FullBehavior;
+
+    /// <summary>Log and raise a pressure event once each time fill crosses this percent. Default is 80.</summary>
+    public int WarningPercent { get; set; } = DomeMqDefaults.WarningPercent;
 }
 
 public sealed class TcpOptions
@@ -266,6 +290,23 @@ public sealed class ChannelOptions
 
     /// <summary>How often orphaned channels and expired messages are scanned. Zero disables the background scan.</summary>
     public TimeSpan CleanupInterval { get; set; } = DomeMqDefaults.CleanupInterval;
+
+    /// <summary>Optional limits for specific channel names. Applied together with the create request: the effective numeric limit is the minimum of the set levels.</summary>
+    public List<ChannelLimitOverride> Overrides { get; set; } = [];
+}
+
+public sealed class ChannelLimitOverride
+{
+    public string Name { get; set; } = "";
+
+    /// <summary>Null inherits <see cref="LimitOptions.MaxMessagesPerChannel"/>.</summary>
+    public int? MaxMessages { get; set; }
+
+    /// <summary>Null inherits <see cref="LimitOptions.MaxBytesPerChannel"/>.</summary>
+    public long? MaxBytes { get; set; }
+
+    /// <summary>Null inherits <see cref="LimitOptions.FullBehavior"/>.</summary>
+    public string? FullBehavior { get; set; }
 }
 
 public sealed class HealthOptions

@@ -10,7 +10,13 @@ public readonly record struct HelloBody(
     uint MaxQueueLength,
     byte DefaultChannelType);
 
-public readonly record struct CreateChannelBody(string Name, byte ChannelType, uint MaxQueueLength, uint MaxPayloadSize);
+public readonly record struct CreateChannelBody(
+    string Name,
+    byte ChannelType,
+    uint MaxQueueLength,
+    uint MaxPayloadSize,
+    byte FullPolicy = 0,
+    uint MaxBytes = 0);
 
 public readonly record struct DeleteChannelBody(string Name);
 
@@ -20,11 +26,17 @@ public readonly record struct PopBody(string ChannelName, uint MaxMessages, uint
 
 public readonly record struct Delivery(string ContentType, byte[] Body);
 
-public readonly record struct CreateChannelAck(string Name, byte ChannelType, uint MaxQueueLength, uint MaxPayloadSize);
+public readonly record struct CreateChannelAck(
+    string Name,
+    byte ChannelType,
+    uint MaxQueueLength,
+    uint MaxPayloadSize,
+    byte FullPolicy = 0,
+    uint MaxBytes = 0);
 
 public readonly record struct DeleteChannelAck(string Name);
 
-public readonly record struct PushAck(string Name, uint Depth);
+public readonly record struct PushAck(string Name, uint Depth, byte Status = 0);
 
 public readonly record struct PopAck(string Name, Delivery[] Messages);
 
@@ -93,23 +105,41 @@ public static class MessageCodec
 
     public static byte[] EncodeCreateChannel(in CreateChannelBody body)
     {
-        var buffer = new byte[ProtocolEncoding.StringSize(body.Name) + 1 + 4 + 4];
+        var extended = body.FullPolicy != 0 || body.MaxBytes != 0;
+        var buffer = new byte[ProtocolEncoding.StringSize(body.Name) + 1 + 4 + 4 + (extended ? 5 : 0)];
         var writer = new SpanWriter(buffer);
         writer.WriteString(body.Name, ProtocolConstants.MaxChannelNameBytes);
         writer.WriteUInt8(body.ChannelType);
         writer.WriteUInt32(body.MaxQueueLength);
         writer.WriteUInt32(body.MaxPayloadSize);
+        if (extended)
+        {
+            writer.WriteUInt8(body.FullPolicy);
+            writer.WriteUInt32(body.MaxBytes);
+        }
+
         return buffer;
     }
 
     public static CreateChannelBody DecodeCreateChannel(ReadOnlySpan<byte> payload)
     {
         var reader = new SpanReader(payload);
-        return new CreateChannelBody(
-            reader.ReadString(ProtocolConstants.MaxChannelNameBytes),
-            reader.ReadUInt8(),
-            reader.ReadUInt32(),
-            reader.ReadUInt32());
+        var name = reader.ReadString(ProtocolConstants.MaxChannelNameBytes);
+        var type = reader.ReadUInt8();
+        var queue = reader.ReadUInt32();
+        var payloadLimit = reader.ReadUInt32();
+        byte policy = 0;
+        uint maxBytes = 0;
+        if (reader.Remaining > 0)
+        {
+            policy = reader.ReadUInt8();
+            if (reader.Remaining >= 4)
+            {
+                maxBytes = reader.ReadUInt32();
+            }
+        }
+
+        return new CreateChannelBody(name, type, queue, payloadLimit, policy, maxBytes);
     }
 
     public static byte[] EncodeDeleteChannel(in DeleteChannelBody body)
@@ -175,13 +205,20 @@ public static class MessageCodec
 
     public static byte[] EncodeCreateChannelAck(in CreateChannelAck body)
     {
-        var buffer = new byte[1 + ProtocolEncoding.StringSize(body.Name) + 1 + 4 + 4];
+        var extended = body.FullPolicy != 0 || body.MaxBytes != 0;
+        var buffer = new byte[1 + ProtocolEncoding.StringSize(body.Name) + 1 + 4 + 4 + (extended ? 5 : 0)];
         var writer = new SpanWriter(buffer);
         writer.WriteUInt8((byte)MessageType.CreateChannel);
         writer.WriteString(body.Name, ProtocolConstants.MaxChannelNameBytes);
         writer.WriteUInt8(body.ChannelType);
         writer.WriteUInt32(body.MaxQueueLength);
         writer.WriteUInt32(body.MaxPayloadSize);
+        if (extended)
+        {
+            writer.WriteUInt8(body.FullPolicy);
+            writer.WriteUInt32(body.MaxBytes);
+        }
+
         return buffer;
     }
 
@@ -189,11 +226,22 @@ public static class MessageCodec
     {
         var reader = new SpanReader(payload);
         ExpectAck(ref reader, MessageType.CreateChannel);
-        return new CreateChannelAck(
-            reader.ReadString(ProtocolConstants.MaxChannelNameBytes),
-            reader.ReadUInt8(),
-            reader.ReadUInt32(),
-            reader.ReadUInt32());
+        var name = reader.ReadString(ProtocolConstants.MaxChannelNameBytes);
+        var type = reader.ReadUInt8();
+        var queue = reader.ReadUInt32();
+        var payloadLimit = reader.ReadUInt32();
+        byte policy = 0;
+        uint maxBytes = 0;
+        if (reader.Remaining > 0)
+        {
+            policy = reader.ReadUInt8();
+            if (reader.Remaining >= 4)
+            {
+                maxBytes = reader.ReadUInt32();
+            }
+        }
+
+        return new CreateChannelAck(name, type, queue, payloadLimit, policy, maxBytes);
     }
 
     public static byte[] EncodeDeleteChannelAck(in DeleteChannelAck body)
@@ -214,11 +262,17 @@ public static class MessageCodec
 
     public static byte[] EncodePushAck(in PushAck body)
     {
-        var buffer = new byte[1 + ProtocolEncoding.StringSize(body.Name) + 4];
+        var extended = body.Status != PushStatus.Accepted;
+        var buffer = new byte[1 + ProtocolEncoding.StringSize(body.Name) + 4 + (extended ? 1 : 0)];
         var writer = new SpanWriter(buffer);
         writer.WriteUInt8((byte)MessageType.Push);
         writer.WriteString(body.Name, ProtocolConstants.MaxChannelNameBytes);
         writer.WriteUInt32(body.Depth);
+        if (extended)
+        {
+            writer.WriteUInt8(body.Status);
+        }
+
         return buffer;
     }
 
@@ -226,7 +280,10 @@ public static class MessageCodec
     {
         var reader = new SpanReader(payload);
         ExpectAck(ref reader, MessageType.Push);
-        return new PushAck(reader.ReadString(ProtocolConstants.MaxChannelNameBytes), reader.ReadUInt32());
+        var name = reader.ReadString(ProtocolConstants.MaxChannelNameBytes);
+        var depth = reader.ReadUInt32();
+        var status = reader.Remaining > 0 ? reader.ReadUInt8() : PushStatus.Accepted;
+        return new PushAck(name, depth, status);
     }
 
     public static int MeasurePopAck(string name, ReadOnlySpan<Delivery> messages)

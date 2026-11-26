@@ -216,6 +216,8 @@ internal static class ReferenceVectors
             "DomeMQ", 1, "0123456789abcdef0123456789abcdef", 16_777_216, 100_000, (byte)ChannelKind.Queue))));
         yield return ("create-channel", Frame(MessageType.CreateChannel, 2, MessageCodec.EncodeCreateChannel(
             new CreateChannelBody("orders", (byte)ChannelKind.Queue, 0, 0))));
+        yield return ("create-channel-limits", Frame(MessageType.CreateChannel, 2, MessageCodec.EncodeCreateChannel(
+            new CreateChannelBody("orders", (byte)ChannelKind.Queue, 0, 0, (byte)FullPolicy.DiscardOldest, 4096))));
         yield return ("create-channel-ack", Frame(MessageType.Ack, 2, MessageCodec.EncodeCreateChannelAck(
             new CreateChannelAck("orders", (byte)ChannelKind.Queue, 100_000, 16_777_216))));
         yield return ("delete-channel", Frame(MessageType.DeleteChannel, 3, MessageCodec.EncodeDeleteChannel(new DeleteChannelBody("orders"))));
@@ -226,6 +228,8 @@ internal static class ReferenceVectors
         yield return ("pop", Frame(MessageType.Pop, 6, MessageCodec.EncodePop(new PopBody("orders", 8, 1000, 0))));
         yield return ("pop-ack", Frame(MessageType.Ack, 6, MessageCodec.EncodePopAck(new PopAck(
             "orders", [new Delivery("application/json", "{\"n\":1}"u8.ToArray())]))));
+        yield return ("push-ack-discarded", Frame(MessageType.Ack, 4, MessageCodec.EncodePushAck(
+            new PushAck("orders", 2, PushStatus.Discarded))));
         yield return ("error-payload-too-large", Frame(MessageType.Error, 4, MessageCodec.EncodeError(
             new ErrorBody((ushort)ErrorCode.PayloadTooLarge, "Payload too large.", (byte)MessageType.Push))));
         yield return ("ping", Frame(MessageType.Ping, 7, MessageCodec.EncodePing(new PingBody(1000))));

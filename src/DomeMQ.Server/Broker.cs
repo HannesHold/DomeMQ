@@ -36,8 +36,13 @@ public sealed class DomeMqBroker : IAsyncDisposable
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _logger = logger;
-        _engine = new BrokerEngine(options);
+        _engine = new BrokerEngine(options, logger);
+        _engine.Pressure += notice => QueuePressure?.Invoke(this, notice);
     }
+
+    public event EventHandler<QueuePressure>? QueuePressure;
+
+    public BrokerStatistics GetStatistics() => _engine.GetStatistics();
 
     public IReadOnlyList<ListenerInfo> Listeners => _listenerInfos;
 

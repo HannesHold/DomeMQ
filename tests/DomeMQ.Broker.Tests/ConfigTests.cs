@@ -21,8 +21,14 @@ public class ConfigTests
         Assert.Equal(DomeMqDefaults.MaxChannels, options.Limits.MaxChannels);
         Assert.Equal(DomeMqDefaults.MaxPayloadSize, options.Limits.MaxPayloadSize);
         Assert.Equal(16 * 1024 * 1024, options.Limits.MaxPayloadSize);
-        Assert.Equal(DomeMqDefaults.MaxQueueLengthPerChannel, options.Limits.MaxQueueLengthPerChannel);
+        Assert.Equal(DomeMqDefaults.MaxMessagesPerChannel, options.Limits.MaxMessagesPerChannel);
+        Assert.Equal(DomeMqDefaults.MaxMessagesPerChannel, options.Limits.MaxQueueLengthPerChannel);
+        Assert.Null(options.Limits.MaxBytesPerChannel);
+        Assert.Equal(DomeMqDefaults.MaxQueuedBytes, options.Limits.MaxQueuedBytes);
+        Assert.Equal(DomeMqDefaults.MaxMessagesPerClient, options.Limits.MaxMessagesPerClient);
+        Assert.Equal(DomeMqDefaults.WarningPercent, options.Limits.WarningPercent);
         Assert.Equal(DomeMqDefaults.FullBehavior, options.Limits.FullBehavior);
+        Assert.Empty(options.Channels.Overrides);
         Assert.Equal(DomeMqDefaults.NoDelay, options.Tcp.NoDelay);
         Assert.Equal(DomeMqDefaults.SocketBufferSize, options.Tcp.ReceiveBufferSize);
         Assert.Equal(DomeMqDefaults.SocketBufferSize, options.Tcp.SendBufferSize);
