@@ -10,7 +10,7 @@ The broker runs embedded in a process, as a standalone executable, or as a Linux
 - Extension points for UDP, KCP, and shared memory. Those factories are registered and throw until an implementation is plugged in.
 - Channels owned by the connection that created them. Anyone can push. Only the owner can pop or delete.
 - Fixed 16-byte little-endian header and a custom binary body. Application payloads are raw bytes.
-- Optional TLS on TCP. Local transports run unencrypted unless you add your own protection.
+- Optional TLS on TCP. Server keys are named pairs loaded from an environment variable or a file, and can be rotated without a restart. Local transports run unencrypted.
 - Payload limits at server, listener, channel, and per-call scope. The effective limit is the minimum of the levels that are set.
 - IP allow lists and block lists, including CIDR ranges, with a per-listener override and a periodic reload.
 - Configuration in `appsettings.json` or `domemq.json`, overridden by environment variables and `--config`.

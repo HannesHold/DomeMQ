@@ -25,12 +25,14 @@ DomeMQ__Limits__MaxClients=2048
 DomeMQ__Listeners__0__Port=6000
 DomeMQ__Authentication__Tokens__0=secret
 DomeMQ__IpAccess__Entries__0=10.0.0.0/8
-DomeMQ__Tls__PfxPassword=...
+DOMEMQ_TLS_KEY=-----BEGIN PRIVATE KEY-----\n...
 ```
 
-Names are case-insensitive.
+`DOMEMQ_TLS_KEY` is the variable *named* by a key source (`{ "Env": "DOMEMQ_TLS_KEY" }`). It is not a `DomeMQ__` configuration key. Its value is the PEM or base64 PKCS#12 itself.
 
-IP access lists are re-read about every 5 seconds from the merged configuration. A reload that does not parse keeps the previous lists and logs the error. Every other setting applies only on restart.
+Names of configuration keys are case-insensitive.
+
+IP access lists and TLS key material are re-read about every 5 seconds. New connections use the new certificates. Connections that already finished the TLS handshake keep the certificate they negotiated. A reload that does not parse keeps the previous IP lists and keys and logs the error. Enabling TLS on a listener that was started without it, or changing a bind address, still requires a restart.
 
 The shipped sample is `src/DomeMQ.Broker/appsettings.json`. It sets every documented default explicitly.
 
@@ -71,10 +73,13 @@ Oversize frames are rejected before the body buffer is allocated, logged, and th
 | `Tcp.ReceiveBufferSize` / `SendBufferSize` | 262144 (256 KiB) |
 | `Tcp.Backlog` | 512 |
 | `Tcp.LingerSeconds` | null (operating system default) |
+| `Keys` | empty |
 | `Tls.Enabled` | false |
+| `Tls.KeyId` | null (the only key, when exactly one is configured) |
 | `Tls.Protocols` | `Tls12`, `Tls13` |
 | `Tls.RequireClientCertificate` | false |
 | `Tls.AllowUntrustedCertificates` | false |
+| `Tls.ClientAuthorities` | empty |
 | `Timeouts.HandshakeTimeout` | 15 seconds |
 | `Timeouts.IdleTimeout` | 5 minutes (zero disables) |
 | `Timeouts.ReadTimeout` / `WriteTimeout` | 2 minutes (zero waits indefinitely) |
@@ -117,7 +122,7 @@ An embedded `new DomeMqOptions()` starts with an empty listener list. `DomeMqOpt
 | `MaxPayloadSize` | number or null | Listener ceiling. Null inherits the global limit. |
 | `NoDelay`, `KeepAlive`, `KeepAliveTimeSeconds`, `KeepAliveIntervalSeconds`, `ReceiveBufferSize`, `SendBufferSize`, `Backlog`, `LingerSeconds` | null or value | Null inherits `Tcp`. |
 | `DeleteStaleSocket`, `Permissions` | null or value | Null inherits `Unix`. |
-| `Tls` | object or null | Null inherits the top-level `Tls` object. A value replaces it. TLS on a Unix listener is a startup error. |
+| `Tls` | object or null | Null inherits the top-level `Tls` object, including `KeyId`. A value replaces the whole section. TLS on a Unix listener is a startup error. |
 | `IpAccess` | object or null | Null inherits the top-level `IpAccess` object. A value **replaces** it for this listener. Lists are not merged. |
 
 ## Limits
@@ -131,21 +136,89 @@ An embedded `new DomeMqOptions()` starts with an empty listener list. `DomeMqOpt
 | `MaxQueueLengthPerChannel` | Default and maximum queue length. `CreateChannel` may request less. More is `InvalidQueueLimit`. |
 | `FullBehavior` | `Reject` (error `ChannelFull`) or `DropOldest` (discard the oldest message, then accept). |
 
-## TLS
+## TLS keys
 
-TCP only.
+TCP only. Certificate and private key bytes are not written in the JSON file. Each source is exactly one of:
 
-| Property | Meaning |
-| --- | --- |
-| `Enabled` | Default false. |
-| `CertificatePath`, `KeyPath` | PEM certificate and private key. |
-| `KeyPassword` | Set when the PEM key is encrypted. |
-| `PfxPath`, `PfxPassword` | PKCS#12 alternative. Do not set PEM and PFX together. |
-| `RequireClientCertificate` | Ask the client for a certificate. |
-| `AllowUntrustedCertificates` | Skip chain trust. Leave false outside local development. |
-| `Protocols` | `Tls12` and/or `Tls13` only. |
+```json
+{ "Env": "VAR_NAME" }
+{ "File": "/path/to/material.pem" }
+```
 
-Certificate revocation lists are not consulted. Put passwords in environment variables (`DomeMQ__Tls__PfxPassword`) instead of the file when you can.
+`Env` is the variable name. The variable's value is PEM text or base64 PKCS#12. A value with literal `\n` sequences and no real newlines is treated as PEM with those sequences turned into newlines. `File` is a PEM or PKCS#12 (`.pfx`) file. Setting both, setting neither, or pasting PEM into the JSON is a startup error.
+
+`Keys` is the list of server identities:
+
+| Property | Required | Meaning |
+| --- | --- | --- |
+| `Id` | yes | Unique name, compared case-sensitively. |
+| `PrivateKey` | yes | PEM private key, or a PKCS#12 blob that also contains the certificate. |
+| `Certificate` | yes | PEM certificate (the first `CERTIFICATE` block is the leaf; later blocks are sent as intermediates), or the same PKCS#12 blob as `PrivateKey`. |
+| `Password` | no | Env or File whose contents are the password for an encrypted PEM key or a PFX. |
+
+A TLS-enabled listener selects a pair with `KeyId`. When `KeyId` is omitted and `Keys` contains exactly one entry, that entry is the default. Zero keys, or more than one key without `KeyId`, fails startup. An unknown `KeyId`, a duplicate `Id`, a missing environment variable, or a missing file fails startup before the broker listens.
+
+`Tls` itself:
+
+| Property | Default | Meaning |
+| --- | --- | --- |
+| `Enabled` | false | |
+| `KeyId` | null | See the default rule above. |
+| `RequireClientCertificate` | false | Mutual TLS. The client must present a certificate. |
+| `AllowUntrustedCertificates` | false | Accept any client certificate. Development only. |
+| `ClientAuthorities` | empty | Trusted CA certificates or pinned client certificates, each an Env or File source. Required for mTLS unless `AllowUntrustedCertificates` is true. |
+| `Protocols` | `Tls12`, `Tls13` | No earlier protocols. |
+
+A listener `Tls` object replaces the top-level section. It does not merge. Repeat `ClientAuthorities` on that listener if it requires client certificates. Unix listeners cannot enable TLS. Certificate revocation lists are not consulted.
+
+### Rotation
+
+Keep two pairs and point the listener at the current one. Replacing the files in place, or changing `KeyId`, is picked up on the next reload (about 5 seconds). Only new handshakes use the new material.
+
+```json
+{
+  "Keys": [
+    {
+      "Id": "2026-a",
+      "PrivateKey": { "File": "/etc/domemq/2026-a.key" },
+      "Certificate": { "File": "/etc/domemq/2026-a.crt" }
+    },
+    {
+      "Id": "2026-b",
+      "PrivateKey": { "Env": "DOMEMQ_KEY_2026B" },
+      "Certificate": { "Env": "DOMEMQ_CERT_2026B" },
+      "Password": { "Env": "DOMEMQ_KEY_2026B_PASSWORD" }
+    }
+  ],
+  "Listeners": [
+    {
+      "Name": "public",
+      "Transport": "Tcp",
+      "Port": 5071,
+      "Tls": {
+        "Enabled": true,
+        "KeyId": "2026-a",
+        "RequireClientCertificate": true,
+        "ClientAuthorities": [
+          { "File": "/etc/domemq/client-ca.pem" }
+        ],
+        "Protocols": [ "Tls12", "Tls13" ]
+      }
+    },
+    {
+      "Name": "internal",
+      "Transport": "Tcp",
+      "Port": 5073,
+      "Tls": {
+        "Enabled": true,
+        "KeyId": "2026-b"
+      }
+    }
+  ]
+}
+```
+
+To rotate the public listener, install the new files and set `KeyId` to `2026-b`, or overwrite `/etc/domemq/2026-a.key` and `2026-a.crt`. Existing connections stay on the old session. A restart is required only to turn TLS on for a listener that was bound in plaintext, or to change the address or port.
 
 ## TCP tuning
 

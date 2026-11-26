@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Sockets;
-using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using DomeMQ;
 
@@ -24,9 +23,9 @@ public sealed class DomeMqBroker : IAsyncDisposable
     private readonly IBrokerLogger? _logger;
     private readonly BrokerEngine _engine;
     private readonly IpAccessDirectory _ip = new();
+    private readonly KeyRing _keys = new();
     private readonly List<ITransportListener> _listeners = [];
     private readonly List<ListenerInfo> _listenerInfos = [];
-    private readonly List<X509Certificate2> _certificates = [];
     private readonly List<Task> _loops = [];
     private readonly CancellationTokenSource _stop = new();
     private HealthServer? _health;
@@ -52,6 +51,7 @@ public sealed class DomeMqBroker : IAsyncDisposable
         }
 
         DomeMqOptionsValidator.ValidateAndThrow(_options);
+        _keys.Load(_options);
         _ip.Replace(_options);
         foreach (var listener in _options.Listeners.Where(static item => item.Enabled))
         {
@@ -118,10 +118,7 @@ public sealed class DomeMqBroker : IAsyncDisposable
         {
         }
 
-        foreach (var certificate in _certificates)
-        {
-            certificate.Dispose();
-        }
+        _keys.Dispose();
     }
 
     public void UpdateIpAccess(DomeMqOptions options)
@@ -130,6 +127,23 @@ public sealed class DomeMqBroker : IAsyncDisposable
         DomeMqOptionsValidator.Normalize(options);
         _ip.Replace(options);
         _logger?.Log(BrokerLogLevel.Information, "IpAccess", "Reloaded IP access rules.");
+    }
+
+    /// <summary>
+    /// Reloads IP access rules and TLS key material. New connections use the new certificates.
+    /// Existing TLS sessions keep the certificate they already negotiated.
+    /// Enabling TLS on a listener that was started without it still requires a restart.
+    /// </summary>
+    public void ReloadHotConfiguration(DomeMqOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        DomeMqOptionsValidator.Normalize(options);
+        var changed = _keys.Load(options);
+        _ip.Replace(options);
+        if (changed)
+        {
+            _logger?.Log(BrokerLogLevel.Information, "Tls", "Reloaded TLS key material for new connections.");
+        }
     }
 
     public bool IsIpAllowed(string listenerName, IPAddress address) => _ip.IsAllowed(listenerName, address);
@@ -146,19 +160,14 @@ public sealed class DomeMqBroker : IAsyncDisposable
         TlsParameters? tls = null;
         if (TransportRegistry.Normalize(listener.Transport) == "tcp")
         {
-            var tlsOptions = listener.Tls ?? _options.Tls;
+            var tlsOptions = DomeMqOptionsValidator.EffectiveTls(_options, listener);
             if (tlsOptions.Enabled)
             {
-                var certificate = CertificateLoader.Load(tlsOptions);
-                _certificates.Add(certificate);
-                DomeMqOptionsValidator.TryParseProtocols(tlsOptions.Protocols, out var protocols, out _);
+                var listenerName = listener.Name;
                 tls = new TlsParameters
                 {
                     Enabled = true,
-                    Certificate = certificate,
-                    RequireClientCertificate = tlsOptions.RequireClientCertificate,
-                    AllowUntrustedCertificates = tlsOptions.AllowUntrustedCertificates,
-                    Protocols = protocols
+                    HandshakeSelector = () => _keys.Require(listenerName)
                 };
             }
         }

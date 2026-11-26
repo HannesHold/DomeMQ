@@ -290,9 +290,10 @@ public sealed class DomeMqClient : IAsyncDisposable
         }
         else if (!string.IsNullOrWhiteSpace(tls.CertificatePath))
         {
-            certificate = string.IsNullOrWhiteSpace(tls.KeyPassword)
+            var loaded = string.IsNullOrWhiteSpace(tls.KeyPassword)
                 ? X509Certificate2.CreateFromPemFile(tls.CertificatePath, tls.KeyPath)
                 : X509Certificate2.CreateFromEncryptedPemFile(tls.CertificatePath, tls.KeyPassword, tls.KeyPath);
+            certificate = CopyWithPersistedKey(loaded);
         }
 
         return new TlsParameters
@@ -303,6 +304,19 @@ public sealed class DomeMqClient : IAsyncDisposable
             Protocols = tls.Protocols,
             ClientCertificate = certificate
         };
+    }
+
+    private static X509Certificate2 CopyWithPersistedKey(X509Certificate2 certificate)
+    {
+        try
+        {
+            var exported = certificate.Export(X509ContentType.Pkcs12);
+            return X509CertificateLoader.LoadPkcs12(exported, password: null);
+        }
+        finally
+        {
+            certificate.Dispose();
+        }
     }
 
     private Task<Frame> RequestAsync(MessageType type, byte[] payload, ushort flags, CancellationToken cancellationToken) =>

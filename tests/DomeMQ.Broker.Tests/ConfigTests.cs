@@ -57,7 +57,11 @@ public class ConfigTests
         Assert.Null(options.Listeners[0].IpAccess);
         Assert.False(options.Listeners[1].Enabled);
         Assert.Equal("/tmp/domemq.sock", options.Listeners[1].Path);
+        Assert.Empty(options.Keys);
         Assert.False(options.Tls.Enabled);
+        Assert.Null(options.Tls.KeyId);
+        Assert.False(options.Tls.RequireClientCertificate);
+        Assert.Empty(options.Tls.ClientAuthorities);
         Assert.Equal(DomeMqDefaults.LogLevel, options.Logging.MinimumLevel);
     }
 }

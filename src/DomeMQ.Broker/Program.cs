@@ -155,11 +155,11 @@ internal sealed class BrokerService(DomeMqOptions options, IConfiguration config
 
                     var reloaded = new DomeMqOptions();
                     configuration.GetSection("DomeMQ").Bind(reloaded);
-                    broker.UpdateIpAccess(reloaded);
+                    broker.ReloadHotConfiguration(reloaded);
                 }
                 catch (Exception ex)
                 {
-                    logger.LogError(ex, "IP access reload failed. The previous rules stay in effect.");
+                    logger.LogError(ex, "Hot reload failed. The previous IP access rules and TLS keys stay in effect.");
                 }
             }
         }

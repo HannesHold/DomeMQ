@@ -51,6 +51,9 @@ public sealed class DomeMqOptions
 
     public TcpOptions Tcp { get; set; } = new();
 
+    /// <summary>Named TLS key pairs. Material is loaded from an environment variable or a file, never inline.</summary>
+    public List<KeyPairOptions> Keys { get; set; } = [];
+
     public TlsOptions Tls { get; set; } = new();
 
     public TimeoutOptions Timeouts { get; set; } = new();
@@ -169,23 +172,50 @@ public sealed class TcpOptions
     public int? LingerSeconds { get; set; }
 }
 
+/// <summary>
+/// A named server key pair. <see cref="PrivateKey"/> and <see cref="Certificate"/> are required.
+/// <see cref="Password"/> is optional and is used for an encrypted PEM key or a PFX.
+/// </summary>
+public sealed class KeyPairOptions
+{
+    public string Id { get; set; } = "";
+
+    public MaterialSource? PrivateKey { get; set; }
+
+    public MaterialSource? Certificate { get; set; }
+
+    public MaterialSource? Password { get; set; }
+}
+
+/// <summary>
+/// Where to read secret or key material. Set exactly one of <see cref="Env"/> or <see cref="File"/>.
+/// Inline PEM or passwords are rejected.
+/// </summary>
+public sealed class MaterialSource
+{
+    /// <summary>Name of an environment variable. The value is PEM text or base64 PKCS#12.</summary>
+    public string? Env { get; set; }
+
+    /// <summary>Filesystem path of a PEM or PKCS#12 file.</summary>
+    public string? File { get; set; }
+}
+
 public sealed class TlsOptions
 {
     public bool Enabled { get; set; }
 
-    public string? CertificatePath { get; set; }
-
-    public string? KeyPath { get; set; }
-
-    public string? KeyPassword { get; set; }
-
-    public string? PfxPath { get; set; }
-
-    public string? PfxPassword { get; set; }
+    /// <summary>
+    /// <see cref="KeyPairOptions.Id"/> to present. When null and exactly one key is configured, that key is used.
+    /// </summary>
+    public string? KeyId { get; set; }
 
     public bool RequireClientCertificate { get; set; }
 
+    /// <summary>Accept any client certificate. Leave false outside local development.</summary>
     public bool AllowUntrustedCertificates { get; set; }
+
+    /// <summary>Trusted client CA certificates or pinned public certificates. Each entry is Env or File.</summary>
+    public List<MaterialSource> ClientAuthorities { get; set; } = [];
 
     public List<string> Protocols { get; set; } = ["Tls12", "Tls13"];
 }

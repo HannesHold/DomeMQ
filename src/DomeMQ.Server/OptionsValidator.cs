@@ -20,9 +20,20 @@ public static class DomeMqOptionsValidator
         options.Health ??= new HealthOptions();
         options.IpAccess ??= new IpAccessOptions();
         options.Logging ??= new LoggingOptions();
+        options.Keys ??= [];
         options.Tls.Protocols ??= [];
+        options.Tls.ClientAuthorities ??= [];
+        if (!string.IsNullOrWhiteSpace(options.Tls.KeyId))
+        {
+            options.Tls.KeyId = options.Tls.KeyId.Trim();
+        }
         options.Authentication.Tokens ??= [];
         options.IpAccess.Entries ??= [];
+        for (var i = 0; i < options.Keys.Count; i++)
+        {
+            options.Keys[i] ??= new KeyPairOptions();
+            options.Keys[i].Id = options.Keys[i].Id?.Trim() ?? "";
+        }
 
         for (var i = 0; i < options.Listeners.Count; i++)
         {
@@ -36,6 +47,11 @@ public static class DomeMqOptionsValidator
             if (listener.Tls is not null)
             {
                 listener.Tls.Protocols ??= [];
+                listener.Tls.ClientAuthorities ??= [];
+                if (!string.IsNullOrWhiteSpace(listener.Tls.KeyId))
+                {
+                    listener.Tls.KeyId = listener.Tls.KeyId.Trim();
+                }
             }
         }
     }
@@ -68,6 +84,8 @@ public static class DomeMqOptionsValidator
             errors.Add("Channels.CleanupInterval must be positive when Channels.OrphanChannelTtl is positive.");
         }
 
+        ValidateKeys(options, errors);
+
         var names = new HashSet<string>(StringComparer.Ordinal);
         var binds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (var i = 0; i < options.Listeners.Count; i++)
@@ -93,7 +111,35 @@ public static class DomeMqOptionsValidator
             }
         }
 
+        if (errors.Count == 0)
+        {
+            try
+            {
+                var bundle = MaterialBundle.Read(options);
+                using var loaded = KeySnapshot.Create(options, bundle);
+            }
+            catch (DomeMqConfigurationException ex)
+            {
+                errors.Add(ex.Message);
+            }
+        }
+
         return errors;
+    }
+
+    public static TlsOptions EffectiveTls(DomeMqOptions root, ListenerOptions listener) => listener.Tls ?? root.Tls;
+
+    /// <summary>
+    /// Explicit <see cref="TlsOptions.KeyId"/>, or the only configured key when <paramref name="tls"/> omits it.
+    /// </summary>
+    public static string? ResolveKeyId(DomeMqOptions root, TlsOptions tls)
+    {
+        if (!string.IsNullOrWhiteSpace(tls.KeyId))
+        {
+            return tls.KeyId.Trim();
+        }
+
+        return root.Keys.Count == 1 ? root.Keys[0].Id : null;
     }
 
     public static void ValidateAndThrow(DomeMqOptions options)
@@ -381,13 +427,13 @@ public static class DomeMqOptionsValidator
                 errors.Add($"Listener '{listener.Name}' Port must be between 0 and 65535.");
             }
 
-            var tls = listener.Tls ?? root.Tls;
+            var tls = EffectiveTls(root, listener);
             if (tls.Enabled)
             {
-                ValidateTls(tls, $"Listener '{listener.Name}'", errors);
+                ValidateTls(root, tls, $"Listener '{listener.Name}'", errors);
             }
 
-            if (!binds.Add($"tcp:{listener.Host}:{listener.Port}"))
+            if (listener.Port != 0 && !binds.Add($"tcp:{listener.Host}:{listener.Port}"))
             {
                 errors.Add($"Listener '{listener.Name}' duplicates TCP bind {listener.Host}:{listener.Port}.");
             }
@@ -411,48 +457,122 @@ public static class DomeMqOptionsValidator
         }
     }
 
-    private static void ValidateTls(TlsOptions tls, string path, List<string> errors)
+    private static void ValidateKeys(DomeMqOptions options, List<string> errors)
     {
-        var hasPem = !string.IsNullOrWhiteSpace(tls.CertificatePath) || !string.IsNullOrWhiteSpace(tls.KeyPath);
-        var hasPfx = !string.IsNullOrWhiteSpace(tls.PfxPath);
-        if (hasPem && hasPfx)
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i < options.Keys.Count; i++)
         {
-            errors.Add($"{path} TLS must set either CertificatePath/KeyPath or PfxPath, not both.");
-        }
-        else if (hasPfx)
-        {
-            if (!File.Exists(tls.PfxPath))
+            var key = options.Keys[i];
+            var path = $"Keys[{i}]";
+            if (string.IsNullOrWhiteSpace(key.Id))
             {
-                errors.Add($"{path} TLS PfxPath '{tls.PfxPath}' was not found.");
+                errors.Add($"{path}.Id is required.");
             }
-        }
-        else if (hasPem)
-        {
-            if (string.IsNullOrWhiteSpace(tls.CertificatePath) || string.IsNullOrWhiteSpace(tls.KeyPath))
+            else if (!seen.Add(key.Id))
             {
-                errors.Add($"{path} TLS requires both CertificatePath and KeyPath.");
+                errors.Add($"Duplicate key id '{key.Id}'.");
             }
-            else
-            {
-                if (!File.Exists(tls.CertificatePath))
-                {
-                    errors.Add($"{path} TLS CertificatePath '{tls.CertificatePath}' was not found.");
-                }
 
-                if (!File.Exists(tls.KeyPath))
-                {
-                    errors.Add($"{path} TLS KeyPath '{tls.KeyPath}' was not found.");
-                }
+            ValidateMaterial(key.PrivateKey, $"{path} '{key.Id}' PrivateKey", required: true, errors);
+            ValidateMaterial(key.Certificate, $"{path} '{key.Id}' Certificate", required: true, errors);
+            ValidateMaterial(key.Password, $"{path} '{key.Id}' Password", required: false, errors);
+        }
+
+        ValidateMaterialList(options.Tls.ClientAuthorities, "Tls.ClientAuthorities", errors);
+        foreach (var listener in options.Listeners)
+        {
+            if (listener.Tls is null)
+            {
+                continue;
+            }
+
+            ValidateMaterialList(listener.Tls.ClientAuthorities, $"Listener '{listener.Name}' ClientAuthorities", errors);
+        }
+    }
+
+    private static void ValidateTls(DomeMqOptions root, TlsOptions tls, string path, List<string> errors)
+    {
+        if (!TryParseProtocols(tls.Protocols, out _, out var protocolError))
+        {
+            errors.Add($"{path} {protocolError}");
+        }
+
+        var keyId = ResolveKeyId(root, tls);
+        if (keyId is null)
+        {
+            errors.Add(root.Keys.Count == 0
+                ? $"{path} TLS is enabled but no keys are configured. Add a Keys entry."
+                : $"{path} TLS is enabled without KeyId, and {root.Keys.Count} keys are configured. Set KeyId. KeyId may be omitted only when exactly one key is defined.");
+        }
+        else if (!root.Keys.Any(key => key.Id == keyId))
+        {
+            errors.Add($"{path} TLS KeyId '{keyId}' does not match a Keys entry.");
+        }
+
+        if (tls.RequireClientCertificate && !tls.AllowUntrustedCertificates && tls.ClientAuthorities.Count == 0 && root.Tls.ClientAuthorities.Count == 0)
+        {
+            errors.Add($"{path} TLS requires a client certificate but no ClientAuthorities are configured. Add trusted CA or public certificates via Env or File, or set AllowUntrustedCertificates for local development.");
+        }
+
+        if (tls.RequireClientCertificate && !tls.AllowUntrustedCertificates && tls.ClientAuthorities.Count == 0 && !ReferenceEquals(tls, root.Tls) && root.Tls.ClientAuthorities.Count > 0)
+        {
+            errors.Add($"{path} TLS replaces the top-level Tls section and requires a client certificate, but this listener has no ClientAuthorities. Repeat them on the listener or set AllowUntrustedCertificates.");
+        }
+    }
+
+    private static void ValidateMaterialList(List<MaterialSource> sources, string path, List<string> errors)
+    {
+        for (var i = 0; i < sources.Count; i++)
+        {
+            ValidateMaterial(sources[i], $"{path}[{i}]", required: true, errors);
+        }
+    }
+
+    private static void ValidateMaterial(MaterialSource? source, string path, bool required, List<string> errors)
+    {
+        if (source is null)
+        {
+            if (required)
+            {
+                errors.Add($"{path} is required and must be {{\"Env\":\"VAR_NAME\"}} or {{\"File\":\"/path\"}}. Inline key material is not allowed.");
+            }
+
+            return;
+        }
+
+        var hasEnv = !string.IsNullOrWhiteSpace(source.Env);
+        var hasFile = !string.IsNullOrWhiteSpace(source.File);
+        if (hasEnv == hasFile)
+        {
+            errors.Add($"{path} must set exactly one of Env or File. Inline key material is not allowed.");
+            return;
+        }
+
+        if (hasEnv)
+        {
+            if (source.Env!.Contains("-----BEGIN", StringComparison.Ordinal) || source.Env.Contains('\n'))
+            {
+                errors.Add($"{path} Env must be an environment variable name, not key material. Inline key material is not allowed.");
+                return;
+            }
+
+            if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(source.Env)))
+            {
+                errors.Add($"{path} environment variable '{source.Env}' is missing or empty.");
             }
         }
         else
         {
-            errors.Add($"{path} TLS is enabled but no certificate is configured.");
-        }
+            if (source.File!.Contains('\n') || source.File.Contains("-----BEGIN", StringComparison.Ordinal))
+            {
+                errors.Add($"{path} File must be a filesystem path. Inline key material is not allowed.");
+                return;
+            }
 
-        if (!TryParseProtocols(tls.Protocols, out _, out var protocolError))
-        {
-            errors.Add($"{path} {protocolError}");
+            if (!File.Exists(source.File))
+            {
+                errors.Add($"{path} file '{source.File}' was not found.");
+            }
         }
     }
 

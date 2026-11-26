@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
+using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 
 namespace DomeMQ;
@@ -87,6 +88,9 @@ public sealed class TlsParameters
 
     public X509Certificate2? Certificate { get; init; }
 
+    /// <summary>Invoked for each accepted connection so the server certificate can be rotated without a restart.</summary>
+    public Func<TlsHandshake>? HandshakeSelector { get; init; }
+
     public bool RequireClientCertificate { get; init; }
 
     public bool AllowUntrustedCertificates { get; init; }
@@ -96,6 +100,22 @@ public sealed class TlsParameters
     public string? TargetHost { get; init; }
 
     public X509Certificate2? ClientCertificate { get; init; }
+}
+
+/// <summary>Server TLS settings for a single accepted connection.</summary>
+public sealed class TlsHandshake
+{
+    public required X509Certificate2 ServerCertificate { get; init; }
+
+    public X509Certificate2Collection? AdditionalCertificates { get; init; }
+
+    public bool RequireClientCertificate { get; init; }
+
+    public bool AllowUntrustedClientCertificates { get; init; }
+
+    public SslProtocols Protocols { get; init; } = SslProtocols.Tls12 | SslProtocols.Tls13;
+
+    public X509Certificate2Collection? TrustedClientRoots { get; init; }
 }
 
 public static class TransportRegistry
@@ -333,25 +353,45 @@ internal static class SocketSetup
             return new SocketByteTransport(socket, remote, description);
         }
 
-        if (tls.Certificate is null)
+        TlsHandshake? handshake = null;
+        if (tls.HandshakeSelector is not null)
+        {
+            handshake = tls.HandshakeSelector();
+        }
+
+        var certificate = handshake?.ServerCertificate ?? tls.Certificate;
+        if (certificate is null)
         {
             throw new InvalidOperationException("TLS is enabled but no server certificate was loaded.");
         }
 
+        var requireClient = handshake?.RequireClientCertificate ?? tls.RequireClientCertificate;
+        var allowUntrusted = handshake?.AllowUntrustedClientCertificates ?? tls.AllowUntrustedCertificates;
+        var protocols = handshake?.Protocols ?? tls.Protocols;
         var stream = new NetworkStream(socket, ownsSocket: true);
-        var ssl = new SslStream(
-            stream,
-            leaveInnerStreamOpen: false,
-            tls.AllowUntrustedCertificates ? static (_, _, _, _) => true : null);
+        var ssl = new SslStream(stream, leaveInnerStreamOpen: false);
         try
         {
-            await ssl.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+            var options = new SslServerAuthenticationOptions
             {
-                ServerCertificate = tls.Certificate,
-                ClientCertificateRequired = tls.RequireClientCertificate,
-                EnabledSslProtocols = tls.Protocols,
+                ServerCertificate = certificate,
+                ClientCertificateRequired = requireClient,
+                EnabledSslProtocols = protocols,
                 CertificateRevocationCheckMode = X509RevocationMode.NoCheck
-            }, cancellationToken).ConfigureAwait(false);
+            };
+            if (handshake?.AdditionalCertificates is { Count: > 0 } extras)
+            {
+                options.ServerCertificateContext = SslStreamCertificateContext.Create(certificate, extras);
+            }
+
+            if (requireClient)
+            {
+                var roots = handshake?.TrustedClientRoots;
+                options.RemoteCertificateValidationCallback = (_, clientCertificate, _, _) =>
+                    ValidateClientCertificate(clientCertificate, allowUntrusted, roots);
+            }
+
+            await ssl.AuthenticateAsServerAsync(options, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -364,6 +404,54 @@ internal static class SocketSetup
 
     public static string DescribeTcp(EndPoint? endpoint) =>
         endpoint is IPEndPoint ip ? $"tcp://{ip.Address}:{ip.Port}" : "tcp://unknown";
+
+    private static bool ValidateClientCertificate(
+        X509Certificate? certificate,
+        bool allowUntrusted,
+        X509Certificate2Collection? trustedRoots)
+    {
+        if (certificate is null)
+        {
+            return false;
+        }
+
+        if (allowUntrusted)
+        {
+            return true;
+        }
+
+        if (trustedRoots is null || trustedRoots.Count == 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var client = new X509Certificate2(certificate);
+            foreach (var root in trustedRoots)
+            {
+                if (string.Equals(client.Thumbprint, root.Thumbprint, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                if (client.GetPublicKey().AsSpan().SequenceEqual(root.GetPublicKey()))
+                {
+                    return true;
+                }
+            }
+
+            using var chain = new X509Chain();
+            chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+            chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
+            chain.ChainPolicy.CustomTrustStore.AddRange(trustedRoots);
+            return chain.Build(client);
+        }
+        catch (CryptographicException)
+        {
+            return false;
+        }
+    }
 }
 
 internal sealed class TcpListener : ITransportListener
