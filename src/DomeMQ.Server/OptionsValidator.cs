@@ -24,16 +24,20 @@ public static class DomeMqOptionsValidator
         options.Keys ??= [];
         options.Tls.Protocols ??= [];
         options.Tls.ClientAuthorities ??= [];
-        if (!string.IsNullOrWhiteSpace(options.Tls.KeyId))
-        {
-            options.Tls.KeyId = options.Tls.KeyId.Trim();
-        }
+        NormalizeTls(options.Tls);
         options.Authentication.Tokens ??= [];
         options.IpAccess.Entries ??= [];
         for (var i = 0; i < options.Keys.Count; i++)
         {
             options.Keys[i] ??= new KeyPairOptions();
             options.Keys[i].Id = options.Keys[i].Id?.Trim() ?? "";
+            var serverName = options.Keys[i].ServerName;
+            options.Keys[i].ServerName = string.IsNullOrWhiteSpace(serverName) ? null : serverName.Trim();
+            options.Keys[i].ServerNames ??= [];
+            for (var name = 0; name < options.Keys[i].ServerNames.Count; name++)
+            {
+                options.Keys[i].ServerNames[name] = options.Keys[i].ServerNames[name]?.Trim() ?? "";
+            }
         }
 
         for (var i = 0; i < options.Listeners.Count; i++)
@@ -49,10 +53,7 @@ public static class DomeMqOptionsValidator
             {
                 listener.Tls.Protocols ??= [];
                 listener.Tls.ClientAuthorities ??= [];
-                if (!string.IsNullOrWhiteSpace(listener.Tls.KeyId))
-                {
-                    listener.Tls.KeyId = listener.Tls.KeyId.Trim();
-                }
+                NormalizeTls(listener.Tls);
             }
         }
     }
@@ -129,6 +130,43 @@ public static class DomeMqOptionsValidator
     }
 
     public static TlsOptions EffectiveTls(DomeMqOptions root, ListenerOptions listener) => listener.Tls ?? root.Tls;
+
+    public static bool TryParseKeyMode(string? text, out string mode)
+    {
+        if (string.IsNullOrWhiteSpace(text) || text.Equals("PerServer", StringComparison.OrdinalIgnoreCase))
+        {
+            mode = "PerServer";
+            return true;
+        }
+
+        if (text.Equals("PerClient", StringComparison.OrdinalIgnoreCase))
+        {
+            mode = "PerClient";
+            return true;
+        }
+
+        mode = "";
+        return false;
+    }
+
+    public static IReadOnlyList<string> ServerNames(KeyPairOptions key)
+    {
+        var names = new List<string>();
+        if (!string.IsNullOrWhiteSpace(key.ServerName))
+        {
+            names.Add(key.ServerName.Trim());
+        }
+
+        foreach (var name in key.ServerNames)
+        {
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                names.Add(name.Trim());
+            }
+        }
+
+        return names.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
 
     /// <summary>
     /// Explicit <see cref="TlsOptions.KeyId"/>, or the only configured key when <paramref name="tls"/> omits it.
@@ -567,6 +605,25 @@ public static class DomeMqOptionsValidator
             ValidateMaterial(key.PrivateKey, $"{path} '{key.Id}' PrivateKey", required: true, errors);
             ValidateMaterial(key.Certificate, $"{path} '{key.Id}' Certificate", required: true, errors);
             ValidateMaterial(key.Password, $"{path} '{key.Id}' Password", required: false, errors);
+            foreach (var name in ServerNames(key))
+            {
+                if (name.Any(static c => c is ',' or '=' or '/' or '\\' or '\n' or '\r'))
+                {
+                    errors.Add($"Key '{key.Id}' server name '{name}' contains a character that cannot be a certificate name.");
+                }
+            }
+        }
+
+        var seenNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var key in options.Keys)
+        {
+            foreach (var name in ServerNames(key))
+            {
+                if (!seenNames.TryAdd(name, key.Id))
+                {
+                    errors.Add($"Duplicate server name '{name}' on keys '{seenNames[name]}' and '{key.Id}'.");
+                }
+            }
         }
 
         ValidateMaterialList(options.Tls.ClientAuthorities, "Tls.ClientAuthorities", errors);
@@ -588,16 +645,66 @@ public static class DomeMqOptionsValidator
             errors.Add($"{path} {protocolError}");
         }
 
-        var keyId = ResolveKeyId(root, tls);
-        if (keyId is null)
+        if (!TryParseKeyMode(tls.KeyMode, out var mode))
         {
-            errors.Add(root.Keys.Count == 0
-                ? $"{path} TLS is enabled but no keys are configured. Add a Keys entry."
-                : $"{path} TLS is enabled without KeyId, and {root.Keys.Count} keys are configured. Set KeyId. KeyId may be omitted only when exactly one key is defined.");
+            errors.Add($"{path} TLS KeyMode must be PerServer or PerClient.");
+            return;
         }
-        else if (!root.Keys.Any(key => key.Id == keyId))
+
+        if (mode == "PerClient")
         {
-            errors.Add($"{path} TLS KeyId '{keyId}' does not match a Keys entry.");
+            if (!string.IsNullOrWhiteSpace(tls.KeyId))
+            {
+                errors.Add($"{path} TLS KeyMode is PerClient, which selects the certificate from the SNI name. Remove KeyId and set ServerName on each Keys entry. Use FallbackKeyId when an unknown name should still be accepted.");
+            }
+
+            if (root.Keys.Count == 0)
+            {
+                errors.Add($"{path} TLS is enabled but no keys are configured. Add a Keys entry.");
+            }
+            else if (!root.Keys.Any(key => ServerNames(key).Count > 0))
+            {
+                errors.Add($"{path} TLS KeyMode is PerClient but no Keys entry has a ServerName.");
+            }
+
+            if (!string.IsNullOrWhiteSpace(tls.FallbackKeyId) && !root.Keys.Any(key => key.Id == tls.FallbackKeyId))
+            {
+                errors.Add($"{path} TLS FallbackKeyId '{tls.FallbackKeyId}' does not match a Keys entry.");
+            }
+
+            foreach (var key in root.Keys)
+            {
+                if (ServerNames(key).Count > 0 || string.Equals(key.Id, tls.FallbackKeyId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (UsedByPerServerListener(root, key.Id))
+                {
+                    continue;
+                }
+
+                errors.Add($"{path} key '{key.Id}' has no ServerName. PerClient matches SNI to ServerName, or set this id as FallbackKeyId.");
+            }
+        }
+        else
+        {
+            if (!string.IsNullOrWhiteSpace(tls.FallbackKeyId))
+            {
+                errors.Add($"{path} TLS FallbackKeyId is only used when KeyMode is PerClient.");
+            }
+
+            var keyId = ResolveKeyId(root, tls);
+            if (keyId is null)
+            {
+                errors.Add(root.Keys.Count == 0
+                    ? $"{path} TLS is enabled but no keys are configured. Add a Keys entry."
+                    : $"{path} TLS is enabled without KeyId, and {root.Keys.Count} keys are configured. Set KeyId. KeyId may be omitted only when exactly one key is defined.");
+            }
+            else if (!root.Keys.Any(key => key.Id == keyId))
+            {
+                errors.Add($"{path} TLS KeyId '{keyId}' does not match a Keys entry.");
+            }
         }
 
         if (tls.RequireClientCertificate && !tls.AllowUntrustedCertificates && tls.ClientAuthorities.Count == 0 && root.Tls.ClientAuthorities.Count == 0)
@@ -609,6 +716,48 @@ public static class DomeMqOptionsValidator
         {
             errors.Add($"{path} TLS replaces the top-level Tls section and requires a client certificate, but this listener has no ClientAuthorities. Repeat them on the listener or set AllowUntrustedCertificates.");
         }
+    }
+
+    private static void NormalizeTls(TlsOptions tls)
+    {
+        if (!string.IsNullOrWhiteSpace(tls.KeyId))
+        {
+            tls.KeyId = tls.KeyId.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(tls.FallbackKeyId))
+        {
+            tls.FallbackKeyId = tls.FallbackKeyId.Trim();
+        }
+
+        if (TryParseKeyMode(tls.KeyMode, out var mode))
+        {
+            tls.KeyMode = mode;
+        }
+    }
+
+    private static bool UsedByPerServerListener(DomeMqOptions root, string keyId)
+    {
+        foreach (var listener in root.Listeners.Where(static item => item.Enabled))
+        {
+            if (TransportRegistry.Normalize(listener.Transport) != "tcp")
+            {
+                continue;
+            }
+
+            var tls = EffectiveTls(root, listener);
+            if (!tls.Enabled || !TryParseKeyMode(tls.KeyMode, out var mode) || mode != "PerServer")
+            {
+                continue;
+            }
+
+            if (string.Equals(ResolveKeyId(root, tls), keyId, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static void ValidateMaterialList(List<MaterialSource> sources, string path, List<string> errors)

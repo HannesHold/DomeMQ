@@ -40,15 +40,15 @@ internal sealed class KeyRing : IDisposable
         }
     }
 
-    public TlsHandshake Require(string listenerName)
+    public TlsListenerMaterial Require(string listenerName)
     {
         var current = _current;
-        if (!current.Listeners.TryGetValue(listenerName, out var handshake))
+        if (!current.Listeners.TryGetValue(listenerName, out var material))
         {
             throw new InvalidOperationException($"TLS material for listener '{listenerName}' is not loaded. A restart is required to enable TLS on a listener that was started without it.");
         }
 
-        return handshake;
+        return material;
     }
 
     public void Dispose()
@@ -71,18 +71,18 @@ internal sealed class KeyRing : IDisposable
 
 internal sealed class KeySnapshot : IDisposable
 {
-    public static KeySnapshot Empty { get; } = new(new Dictionary<string, TlsHandshake>(StringComparer.Ordinal), []);
+    public static KeySnapshot Empty { get; } = new(new Dictionary<string, TlsListenerMaterial>(StringComparer.Ordinal), []);
 
     private readonly List<X509Certificate2> _owned;
     private bool _disposed;
 
-    private KeySnapshot(Dictionary<string, TlsHandshake> listeners, List<X509Certificate2> owned)
+    private KeySnapshot(Dictionary<string, TlsListenerMaterial> listeners, List<X509Certificate2> owned)
     {
         Listeners = listeners;
         _owned = owned;
     }
 
-    public Dictionary<string, TlsHandshake> Listeners { get; }
+    public Dictionary<string, TlsListenerMaterial> Listeners { get; }
 
     public static KeySnapshot Create(DomeMqOptions options, MaterialBundle bundle)
     {
@@ -122,7 +122,7 @@ internal sealed class KeySnapshot : IDisposable
                 }
             }
 
-            var listeners = new Dictionary<string, TlsHandshake>(StringComparer.Ordinal);
+            var listeners = new Dictionary<string, TlsListenerMaterial>(StringComparer.Ordinal);
             foreach (var listener in options.Listeners.Where(static item => item.Enabled))
             {
                 if (TransportRegistry.Normalize(listener.Transport) != "tcp")
@@ -136,13 +136,6 @@ internal sealed class KeySnapshot : IDisposable
                     continue;
                 }
 
-                var keyId = DomeMqOptionsValidator.ResolveKeyId(options, tls)
-                    ?? throw new DomeMqConfigurationException([$"Listener '{listener.Name}' TLS has no key."]);
-                if (!certificates.TryGetValue(keyId, out var certificate))
-                {
-                    throw new DomeMqConfigurationException([$"Listener '{listener.Name}' TLS KeyId '{keyId}' does not match a Keys entry."]);
-                }
-
                 var authorityKey = listener.Tls is null ? "" : listener.Name;
                 authorities.TryGetValue(authorityKey, out var roots);
                 if (!DomeMqOptionsValidator.TryParseProtocols(tls.Protocols, out var protocols, out var protocolError))
@@ -150,14 +143,53 @@ internal sealed class KeySnapshot : IDisposable
                     throw new DomeMqConfigurationException([protocolError]);
                 }
 
-                listeners.Add(listener.Name, new TlsHandshake
+                if (!DomeMqOptionsValidator.TryParseKeyMode(tls.KeyMode, out var mode))
                 {
-                    ServerCertificate = certificate.Certificate,
-                    AdditionalCertificates = certificate.Chain.Count == 0 ? null : certificate.Chain,
-                    RequireClientCertificate = tls.RequireClientCertificate,
-                    AllowUntrustedClientCertificates = tls.AllowUntrustedCertificates,
-                    Protocols = protocols,
-                    TrustedClientRoots = roots
+                    throw new DomeMqConfigurationException([$"Listener '{listener.Name}' TLS KeyMode must be PerServer or PerClient."]);
+                }
+
+                if (mode == "PerClient")
+                {
+                    var byName = new Dictionary<string, TlsHandshake>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var pair in options.Keys)
+                    {
+                        if (!certificates.TryGetValue(pair.Id, out var named))
+                        {
+                            continue;
+                        }
+
+                        var handshake = Handshake(named, pair.Id, tls, protocols, roots);
+                        foreach (var serverName in DomeMqOptionsValidator.ServerNames(pair))
+                        {
+                            byName[serverName] = handshake;
+                        }
+                    }
+
+                    TlsHandshake? fallback = null;
+                    if (!string.IsNullOrWhiteSpace(tls.FallbackKeyId))
+                    {
+                        if (!certificates.TryGetValue(tls.FallbackKeyId, out var fallbackCertificate))
+                        {
+                            throw new DomeMqConfigurationException([$"Listener '{listener.Name}' TLS FallbackKeyId '{tls.FallbackKeyId}' does not match a Keys entry."]);
+                        }
+
+                        fallback = Handshake(fallbackCertificate, tls.FallbackKeyId, tls, protocols, roots);
+                    }
+
+                    listeners.Add(listener.Name, new TlsListenerMaterial { ByName = byName, Fallback = fallback });
+                    continue;
+                }
+
+                var keyId = DomeMqOptionsValidator.ResolveKeyId(options, tls)
+                    ?? throw new DomeMqConfigurationException([$"Listener '{listener.Name}' TLS has no key."]);
+                if (!certificates.TryGetValue(keyId, out var certificate))
+                {
+                    throw new DomeMqConfigurationException([$"Listener '{listener.Name}' TLS KeyId '{keyId}' does not match a Keys entry."]);
+                }
+
+                listeners.Add(listener.Name, new TlsListenerMaterial
+                {
+                    Fixed = Handshake(certificate, keyId, tls, protocols, roots)
                 });
             }
 
@@ -173,6 +205,22 @@ internal sealed class KeySnapshot : IDisposable
             throw;
         }
     }
+
+    private static TlsHandshake Handshake(
+        LoadedCertificate certificate,
+        string keyId,
+        TlsOptions tls,
+        System.Security.Authentication.SslProtocols protocols,
+        X509Certificate2Collection? roots) => new()
+    {
+        KeyId = keyId,
+        ServerCertificate = certificate.Certificate,
+        AdditionalCertificates = certificate.Chain.Count == 0 ? null : certificate.Chain,
+        RequireClientCertificate = tls.RequireClientCertificate,
+        AllowUntrustedClientCertificates = tls.AllowUntrustedCertificates,
+        Protocols = protocols,
+        TrustedClientRoots = roots
+    };
 
     public void Dispose()
     {
@@ -216,6 +264,8 @@ internal sealed class MaterialBundle
             }
 
             Append(hash, pair.Id);
+            Append(hash, pair.ServerName ?? "");
+            Append(hash, string.Join('\n', pair.ServerNames));
             var privateKey = MaterialReader.Read(pair.PrivateKey, hash);
             var certificate = MaterialReader.Read(pair.Certificate, hash);
             string? password = null;
@@ -245,7 +295,9 @@ internal sealed class MaterialBundle
             var tls = listener.Tls ?? options.Tls;
             Append(hash, listener.Name);
             Append(hash, tls.Enabled ? "1" : "0");
+            Append(hash, tls.KeyMode ?? "");
             Append(hash, tls.KeyId ?? "");
+            Append(hash, tls.FallbackKeyId ?? "");
             Append(hash, tls.RequireClientCertificate ? "1" : "0");
             Append(hash, tls.AllowUntrustedCertificates ? "1" : "0");
             Append(hash, string.Join(',', tls.Protocols));
@@ -411,9 +463,10 @@ internal static class KeyParser
             throw new DomeMqConfigurationException([$"Key '{id}' is encrypted. Set Password to an Env or File source."]);
         }
 
+        var leafPem = FirstCertificate(certificatePem);
         var combined = string.IsNullOrEmpty(password)
-            ? X509Certificate2.CreateFromPem(certificatePem, keyPem)
-            : X509Certificate2.CreateFromEncryptedPem(certificatePem, keyPem, password);
+            ? X509Certificate2.CreateFromPem(leafPem, keyPem)
+            : X509Certificate2.CreateFromEncryptedPem(leafPem, keyPem, password);
         var persisted = Persist(combined);
         if (!persisted.HasPrivateKey)
         {
@@ -437,6 +490,20 @@ internal static class KeyParser
         }
 
         return new LoadedCertificate(persisted, chain);
+    }
+
+    private static string FirstCertificate(string pem)
+    {
+        const string begin = "-----BEGIN CERTIFICATE-----";
+        const string end = "-----END CERTIFICATE-----";
+        var start = pem.IndexOf(begin, StringComparison.Ordinal);
+        var stop = pem.IndexOf(end, start < 0 ? 0 : start, StringComparison.Ordinal);
+        if (start < 0 || stop < 0)
+        {
+            return pem;
+        }
+
+        return pem[start..(stop + end.Length)];
     }
 
     private static X509Certificate2 Persist(X509Certificate2 certificate)

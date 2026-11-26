@@ -304,14 +304,103 @@ public sealed class DomeMqClient : IAsyncDisposable
             certificate = CopyWithPersistedKey(loaded);
         }
 
+        var serverName = string.IsNullOrWhiteSpace(tls.ServerName) ? tls.TargetHost : tls.ServerName;
+        byte[]? pinnedSpki = null;
+        X509Certificate2? pinnedCertificate = null;
+        if (tls.Pin is not null)
+        {
+            pinnedSpki = ReadPinnedSpki(tls.Pin);
+            pinnedCertificate = ReadPinnedCertificate(tls.Pin);
+            if (pinnedSpki is null && pinnedCertificate is null)
+            {
+                throw new DomeMqException("Server pin is set but neither an SPKI hash nor a certificate was provided.");
+            }
+        }
+
         return new TlsParameters
         {
             Enabled = true,
-            TargetHost = tls.TargetHost,
+            TargetHost = serverName,
             AllowUntrustedCertificates = tls.AllowUntrustedCertificates,
             Protocols = tls.Protocols,
-            ClientCertificate = certificate
+            ClientCertificate = certificate,
+            PinnedSpkiSha256 = pinnedSpki,
+            PinnedCertificate = pinnedCertificate
         };
+    }
+
+    private static byte[]? ReadPinnedSpki(ServerPinOptions pin)
+    {
+        if (pin.SpkiSha256Bytes is { Length: > 0 } bytes)
+        {
+            if (bytes.Length != 32)
+            {
+                throw new DomeMqException("Pinned SPKI SHA-256 must be 32 bytes.");
+            }
+
+            return bytes;
+        }
+
+        if (string.IsNullOrWhiteSpace(pin.SpkiSha256))
+        {
+            return null;
+        }
+
+        if (!CertificatePin.TryParseSpkiSha256(pin.SpkiSha256, out var hash, out var error))
+        {
+            throw new DomeMqException(error);
+        }
+
+        return hash;
+    }
+
+    private static X509Certificate2? ReadPinnedCertificate(ServerPinOptions pin)
+    {
+        if (pin.CertificateBytes is { Length: > 0 } bytes)
+        {
+            return LoadCertificate(bytes, System.Text.Encoding.UTF8.GetString(bytes));
+        }
+
+        if (!string.IsNullOrWhiteSpace(pin.CertificateFile))
+        {
+            var file = File.ReadAllBytes(pin.CertificateFile);
+            return LoadCertificate(file, System.Text.Encoding.UTF8.GetString(file));
+        }
+
+        if (string.IsNullOrWhiteSpace(pin.CertificateEnv))
+        {
+            return null;
+        }
+
+        var value = Environment.GetEnvironmentVariable(pin.CertificateEnv);
+        if (string.IsNullOrEmpty(value))
+        {
+            throw new DomeMqException($"Environment variable '{pin.CertificateEnv}' is missing or empty.");
+        }
+
+        if (!value.Contains('\n') && value.Contains("\\n", StringComparison.Ordinal))
+        {
+            value = value.Replace("\\n", "\n", StringComparison.Ordinal);
+        }
+
+        return LoadCertificate(System.Text.Encoding.UTF8.GetBytes(value), value);
+    }
+
+    private static X509Certificate2 LoadCertificate(byte[] bytes, string text)
+    {
+        if (text.Contains("BEGIN CERTIFICATE", StringComparison.Ordinal))
+        {
+            const string end = "-----END CERTIFICATE-----";
+            var stop = text.IndexOf(end, StringComparison.Ordinal);
+            if (stop >= 0)
+            {
+                text = text[..(stop + end.Length)];
+            }
+
+            return X509Certificate2.CreateFromPem(text);
+        }
+
+        return X509CertificateLoader.LoadCertificate(bytes);
     }
 
     private static X509Certificate2 CopyWithPersistedKey(X509Certificate2 certificate)

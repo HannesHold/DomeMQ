@@ -46,7 +46,11 @@ public static class ConfigLoader
                 ? listener.Path
                 : $"{listener.Host}:{listener.Port}";
             var tls = listener.Tls ?? options.Tls;
-            var tlsText = tls.Enabled ? $"TLS key {tls.KeyId ?? "(single key)"}" : "plaintext";
+            var tlsText = !tls.Enabled
+                ? "plaintext"
+                : tls.KeyMode == "PerClient"
+                    ? $"TLS per client{(string.IsNullOrWhiteSpace(tls.FallbackKeyId) ? "" : $", fallback {tls.FallbackKeyId}")}"
+                    : $"TLS key {tls.KeyId ?? "(single key)"}";
             lines.Add($"Listener {listener.Name} {listener.Transport} {where} {tlsText}");
         }
 

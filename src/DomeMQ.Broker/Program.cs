@@ -6,6 +6,11 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
+if (args.Length > 0 && args[0].Equals("keygen", StringComparison.OrdinalIgnoreCase))
+{
+    return KeyGenCommand.Run(args.Skip(1).ToArray());
+}
+
 var commandArgs = args;
 var configPath = TakeConfigPath(ref commandArgs);
 var builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings

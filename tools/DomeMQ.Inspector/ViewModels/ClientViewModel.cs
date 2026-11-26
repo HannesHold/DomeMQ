@@ -73,6 +73,8 @@ public partial class ClientViewModel : ObservableObject
     [ObservableProperty] private bool _tlsEnabled;
     [ObservableProperty] private bool _allowUntrusted = true;
     [ObservableProperty] private string _targetHost = "";
+    [ObservableProperty] private string _pinSpki = "";
+    [ObservableProperty] private string _pinCertificatePath = "";
     [ObservableProperty] private string _pfxPath = "";
     [ObservableProperty] private string _pfxPassword = "";
     [ObservableProperty] private string _certificatePath = "";
@@ -697,7 +699,14 @@ public partial class ClientViewModel : ObservableObject
             {
                 Enabled = true,
                 AllowUntrustedCertificates = AllowUntrusted,
-                TargetHost = string.IsNullOrWhiteSpace(TargetHost) ? Host : TargetHost,
+                ServerName = string.IsNullOrWhiteSpace(TargetHost) ? null : TargetHost,
+                Pin = string.IsNullOrWhiteSpace(PinSpki) && string.IsNullOrWhiteSpace(PinCertificatePath)
+                    ? null
+                    : new ServerPinOptions
+                    {
+                        SpkiSha256 = string.IsNullOrWhiteSpace(PinSpki) ? null : PinSpki,
+                        CertificateFile = string.IsNullOrWhiteSpace(PinCertificatePath) ? null : PinCertificatePath
+                    },
                 PfxPath = string.IsNullOrWhiteSpace(PfxPath) ? null : PfxPath,
                 PfxPassword = PfxPassword,
                 CertificatePath = string.IsNullOrWhiteSpace(CertificatePath) ? null : CertificatePath,

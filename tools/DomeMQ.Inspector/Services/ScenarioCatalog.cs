@@ -414,6 +414,8 @@ public static class ScenarioCatalog
         {
             Enabled = source.Tls.Enabled,
             TargetHost = source.Tls.TargetHost,
+            ServerName = source.Tls.ServerName,
+            Pin = source.Tls.Pin,
             AllowUntrustedCertificates = source.Tls.AllowUntrustedCertificates,
             CertificatePath = source.Tls.CertificatePath,
             KeyPath = source.Tls.KeyPath,

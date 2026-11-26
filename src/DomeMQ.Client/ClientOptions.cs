@@ -48,6 +48,12 @@ public sealed class TlsClientOptions
 
     public string? TargetHost { get; set; }
 
+    /// <summary>TLS server name sent as SNI. When set, it replaces <see cref="TargetHost"/>.</summary>
+    public string? ServerName { get; set; }
+
+    /// <summary>When set, the handshake fails unless the server certificate matches.</summary>
+    public ServerPinOptions? Pin { get; set; }
+
     public bool AllowUntrustedCertificates { get; set; }
 
     public string? CertificatePath { get; set; }
@@ -61,6 +67,28 @@ public sealed class TlsClientOptions
     public string? PfxPassword { get; set; }
 
     public SslProtocols Protocols { get; set; } = SslProtocols.Tls12 | SslProtocols.Tls13;
+}
+
+/// <summary>
+/// Pins the server certificate. Set one or more of the SPKI hash and the certificate.
+/// Every value that is set must match. A certificate can be raw bytes, a file, or an environment variable.
+/// </summary>
+public sealed class ServerPinOptions
+{
+    /// <summary>SHA-256 of the server SubjectPublicKeyInfo, hex or base64.</summary>
+    public string? SpkiSha256 { get; set; }
+
+    /// <summary>Raw 32-byte SHA-256 of the server SubjectPublicKeyInfo.</summary>
+    public byte[]? SpkiSha256Bytes { get; set; }
+
+    /// <summary>PEM or DER certificate bytes.</summary>
+    public byte[]? CertificateBytes { get; set; }
+
+    /// <summary>PEM or DER certificate file.</summary>
+    public string? CertificateFile { get; set; }
+
+    /// <summary>Environment variable holding PEM text or base64 DER.</summary>
+    public string? CertificateEnv { get; set; }
 }
 
 /// <summary>Per-send options. Null limits inherit the client and server limits.</summary>

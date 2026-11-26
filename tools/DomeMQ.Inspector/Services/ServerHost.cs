@@ -13,6 +13,8 @@ public sealed class ClientSnapshot
 
     public required string Certificate { get; init; }
 
+    public required string KeyId { get; init; }
+
     public required bool Connected { get; init; }
 }
 
@@ -100,6 +102,7 @@ public sealed class ServerHost : IBrokerConnectionObserver
                 Endpoint = snapshot.Remote,
                 ConnectedAt = snapshot.ConnectedAt,
                 Certificate = snapshot.ClientCertificateSubject ?? "",
+                KeyId = snapshot.KeyId ?? "",
                 Connected = true
             });
         }
@@ -122,6 +125,7 @@ public sealed class ServerHost : IBrokerConnectionObserver
                 Endpoint = current.Endpoint,
                 ConnectedAt = current.ConnectedAt,
                 Certificate = current.Certificate,
+                KeyId = current.KeyId,
                 Connected = false
             };
         }

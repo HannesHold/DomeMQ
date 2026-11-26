@@ -146,6 +146,8 @@ An embedded `new DomeMqOptions()` starts with an empty listener list. `DomeMqOpt
 
 ## TLS keys
 
+How to create the files, pin them on a client, and rotate them is in [keys.md](keys.md). `DomeMQ.Broker keygen` writes a CA, per-name server certificates, and mTLS client certificates without OpenSSL.
+
 TCP only. Certificate and private key bytes are not written in the JSON file. Each source is exactly one of:
 
 ```json
@@ -163,15 +165,25 @@ TCP only. Certificate and private key bytes are not written in the JSON file. Ea
 | `PrivateKey` | yes | PEM private key, or a PKCS#12 blob that also contains the certificate. |
 | `Certificate` | yes | PEM certificate (the first `CERTIFICATE` block is the leaf; later blocks are sent as intermediates), or the same PKCS#12 blob as `PrivateKey`. |
 | `Password` | no | Env or File whose contents are the password for an encrypted PEM key or a PFX. |
+| `ServerName` | null | One SNI name. Used when `Tls.KeyMode` is `PerClient`. |
+| `ServerNames` | empty | More SNI names for the same key. Compared without case. |
 
-A TLS-enabled listener selects a pair with `KeyId`. When `KeyId` is omitted and `Keys` contains exactly one entry, that entry is the default. Zero keys, or more than one key without `KeyId`, fails startup. An unknown `KeyId`, a duplicate `Id`, a missing environment variable, or a missing file fails startup before the broker listens.
+`Tls.KeyMode` is `PerServer` or `PerClient`.
+
+`PerServer` is the default. A TLS listener presents `KeyId` to every connection. When `KeyId` is omitted and `Keys` contains exactly one entry, that entry is the default. Zero keys, or more than one key without `KeyId`, fails startup.
+
+`PerClient` selects the pair from the TLS server name (SNI). Each key needs `ServerName` or `ServerNames`. The same name on two keys fails startup. An unknown or missing name is rejected unless `FallbackKeyId` names a key. `KeyId` must be omitted in this mode.
+
+An unknown `KeyId` or `FallbackKeyId`, a duplicate `Id`, a missing environment variable, or a missing file fails startup before the broker listens. Names, the mode, and the fallback are part of the periodic reload (about 5 seconds). New handshakes use the reloaded material.
 
 `Tls` itself:
 
 | Property | Default | Meaning |
 | --- | --- | --- |
 | `Enabled` | false | |
-| `KeyId` | null | See the default rule above. |
+| `KeyMode` | `PerServer` | `PerServer` or `PerClient`. |
+| `KeyId` | null | `PerServer` only. See the default rule above. |
+| `FallbackKeyId` | null | `PerClient` only. Key used when SNI is missing or unknown. Null rejects. |
 | `RequireClientCertificate` | false | Mutual TLS. The client must present a certificate. |
 | `AllowUntrustedCertificates` | false | Accept any client certificate. Development only. |
 | `ClientAuthorities` | empty | Trusted CA certificates or pinned client certificates, each an Env or File source. Required for mTLS unless `AllowUntrustedCertificates` is true. |
@@ -226,7 +238,7 @@ Keep two pairs and point the listener at the current one. Replacing the files in
 }
 ```
 
-To rotate the public listener, install the new files and set `KeyId` to `2026-b`, or overwrite `/etc/domemq/2026-a.key` and `2026-a.crt`. Existing connections stay on the old session. A restart is required only to turn TLS on for a listener that was bound in plaintext, or to change the address or port.
+To rotate the public listener, install the new files and set `KeyId` to `2026-b`, or overwrite `/etc/domemq/2026-a.key` and `2026-a.crt`. In `PerClient` mode, point the SNI name at the new key (or replace that key's files) and update any client that pins the old public key. Existing connections stay on the old session. A restart is required only to turn TLS on for a listener that was bound in plaintext, or to change the address or port. The full procedure is in [keys.md](keys.md).
 
 ## TCP tuning
 

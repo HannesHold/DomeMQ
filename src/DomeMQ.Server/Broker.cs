@@ -21,6 +21,9 @@ public sealed class BrokerConnectionSnapshot
     public required DateTimeOffset ConnectedAt { get; init; }
 
     public string? ClientCertificateSubject { get; init; }
+
+    /// <summary>Key id presented during the TLS handshake. Null for plaintext.</summary>
+    public string? KeyId { get; init; }
 }
 
 public sealed class ListenerInfo
@@ -291,7 +294,8 @@ public sealed class DomeMqBroker : IAsyncDisposable
                     Id = session.PublicId,
                     Remote = transport.Description,
                     ConnectedAt = connectedAt,
-                    ClientCertificateSubject = transport.PeerCertificateSubject
+                    ClientCertificateSubject = transport.PeerCertificateSubject,
+                    KeyId = transport.ServerKeyId
                 });
             }
             catch (Exception)

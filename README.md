@@ -10,7 +10,7 @@ The broker runs embedded in a process, as a standalone executable, or as a Linux
 - Extension points for UDP, KCP, and shared memory. Those factories are registered and throw until an implementation is plugged in.
 - Channels owned by the connection that created them. Anyone can push. Only the owner can pop or delete.
 - Fixed 16-byte little-endian header and a custom binary body. Application payloads are raw bytes.
-- Optional TLS on TCP. Server keys are named pairs loaded from an environment variable or a file, and can be rotated without a restart. Local transports run unencrypted.
+- Optional TLS on TCP. One key for the whole server, or one key per client selected by SNI. Keys come from an environment variable or a file and can be rotated without a restart. See [docs/keys.md](docs/keys.md).
 - Payload limits at server, listener, channel, and per-call scope. The effective limit is the minimum of the levels that are set.
 - Queue overflow policies: reject, discard the newest, discard the oldest, or clear the channel. Message, byte, per-client, and server memory caps are separate. Crossing 80% raises a pressure event.
 - IP allow lists and block lists, including CIDR ranges, with a per-listener override and a periodic reload.
@@ -33,6 +33,7 @@ tools/DomeMQ.Inspector Avalonia server and client inspector
 tests/                 xUnit
 docs/protocol.md       language-independent protocol
 docs/configuration.md  every broker option and its default
+docs/keys.md           creating, pinning, and rotating TLS keys
 docs/inspector.md      inspector screens and traffic tap
 ```
 

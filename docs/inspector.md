@@ -26,7 +26,7 @@ Start embeds `DomeMqBroker`. An empty config path uses the defaults (TCP `0.0.0.
 
 Overview shows messages per second, bytes per second, queued bytes against `MaxQueuedBytes`, errors counted from `Error` frames, a throughput chart, the `QueuePressure` log, and a short config summary (listeners, TLS key id, limits, IP rules).
 
-Clients lists each accepted connection: endpoint, connect time, client-certificate subject when the listener asked for one, and messages and bytes in each direction. Channels lists name, type, owner id, count against the max, bytes, a fill bar that turns amber at 80%, the full policy, and the dropped and cleared counters.
+Clients lists each accepted connection: endpoint, connect time, client-certificate subject when the listener asked for one, the server key id chosen for that handshake, and messages and bytes in each direction. Channels lists name, type, owner id, count against the max, bytes, a fill bar that turns amber at 80%, the full policy, and the dropped and cleared counters.
 
 ![Server overview](images/inspector/server-overview.png)
 
@@ -36,7 +36,7 @@ Clients lists each accepted connection: endpoint, connect time, client-certifica
 
 ## Client mode
 
-Connect over TCP or a Unix socket. TLS can check the server certificate or allow an untrusted one, and can present a client PFX or PEM key. Create and delete are on the same screen: channel type, max messages, max payload, max bytes, and full policy.
+Connect over TCP or a Unix socket. TLS can check the server certificate or allow an untrusted one, send an SNI name, pin the server SPKI hash or certificate file, and present a client PFX or PEM key. Create and delete are on the same screen: channel type, max messages, max payload, max bytes, and full policy.
 
 Send / Stress takes a text or hex payload, a target channel, a repeat count, a parallel degree, and an interval. Start and Stop drive one session. The screen keeps a progress bar and reports sent, accepted, discarded, failed, elapsed time, msgs/s, MB/s, and latency min, average, max, and p99, plus a live chart.
 

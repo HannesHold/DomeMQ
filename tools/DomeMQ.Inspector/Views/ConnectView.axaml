@@ -26,7 +26,11 @@
             <CheckBox Content="Enable TLS" IsChecked="{Binding TlsEnabled}"/>
             <CheckBox Content="Allow untrusted server certificate" IsChecked="{Binding AllowUntrusted}"/>
           </StackPanel>
-          <TextBox PlaceholderText="Target host (SNI)" Text="{Binding TargetHost}"/>
+          <TextBox PlaceholderText="SNI server name" Text="{Binding TargetHost}"/>
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+            <TextBox PlaceholderText="Pinned SPKI SHA-256 (hex)" Text="{Binding PinSpki}"/>
+            <TextBox Grid.Column="1" PlaceholderText="Pinned server certificate file" Text="{Binding PinCertificatePath}"/>
+          </Grid>
           <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
             <TextBox PlaceholderText="Client PFX path" Text="{Binding PfxPath}"/>
             <TextBox Grid.Column="1" PlaceholderText="PFX password" Text="{Binding PfxPassword}" PasswordChar="•"/>

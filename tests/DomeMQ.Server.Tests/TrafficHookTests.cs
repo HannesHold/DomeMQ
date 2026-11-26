@@ -33,6 +33,11 @@ public class TrafficHookTests
         });
         await client.CreateChannelAsync("owned", ChannelKind.Queue);
         await client.DisposeAsync();
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        while (connections.Disconnected.Count == 0 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(20);
+        }
 
         var connected = Assert.Single(connections.Connected);
         Assert.Contains("127.0.0.1", connected.Remote);

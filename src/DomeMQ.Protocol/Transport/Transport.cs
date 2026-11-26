@@ -22,6 +22,9 @@ public interface IByteTransport : IAsyncDisposable
 
     /// <summary>Subject of the peer certificate after a TLS handshake. Null when the connection is not TLS or the peer sent no certificate.</summary>
     string? PeerCertificateSubject { get; }
+
+    /// <summary>Server key id chosen for this connection. Null on plaintext and on client sockets.</summary>
+    string? ServerKeyId { get; }
 }
 
 /// <summary>A bound listener that accepts <see cref="IByteTransport"/> connections.</summary>
@@ -95,7 +98,13 @@ public sealed class TlsParameters
     public X509Certificate2? Certificate { get; init; }
 
     /// <summary>Invoked for each accepted connection so the server certificate can be rotated without a restart.</summary>
-    public Func<TlsHandshake>? HandshakeSelector { get; init; }
+    public Func<TlsListenerMaterial>? HandshakeSelector { get; init; }
+
+    /// <summary>SHA-256 of the server certificate SubjectPublicKeyInfo. The handshake fails when the peer key differs.</summary>
+    public byte[]? PinnedSpkiSha256 { get; init; }
+
+    /// <summary>Expected server certificate. The handshake fails when the peer certificate thumbprint differs.</summary>
+    public X509Certificate2? PinnedCertificate { get; init; }
 
     public bool RequireClientCertificate { get; init; }
 
@@ -108,9 +117,21 @@ public sealed class TlsParameters
     public X509Certificate2? ClientCertificate { get; init; }
 }
 
+/// <summary>Certificates a listener can present. <see cref="Fixed"/> is one key for every connection. <see cref="ByName"/> selects by the TLS server name.</summary>
+public sealed class TlsListenerMaterial
+{
+    public TlsHandshake? Fixed { get; init; }
+
+    public IReadOnlyDictionary<string, TlsHandshake>? ByName { get; init; }
+
+    public TlsHandshake? Fallback { get; init; }
+}
+
 /// <summary>Server TLS settings for a single accepted connection.</summary>
 public sealed class TlsHandshake
 {
+    public string KeyId { get; init; } = "";
+
     public required X509Certificate2 ServerCertificate { get; init; }
 
     public X509Certificate2Collection? AdditionalCertificates { get; init; }
@@ -318,10 +339,21 @@ internal static class SocketSetup
         }
 
         var stream = new NetworkStream(socket, ownsSocket: true);
-        var ssl = new SslStream(
-            stream,
-            leaveInnerStreamOpen: false,
-            tls.AllowUntrustedCertificates ? static (_, _, _, _) => true : null);
+        string? pinFailure = null;
+        var pin = tls.PinnedSpkiSha256 is not null || tls.PinnedCertificate is not null;
+        RemoteCertificateValidationCallback? validate = pin
+            ? (_, certificate, _, errors) =>
+            {
+                if (!CertificatePin.AcceptServer(certificate, errors, tls.AllowUntrustedCertificates, tls.PinnedSpkiSha256, tls.PinnedCertificate, out var reason))
+                {
+                    pinFailure = reason;
+                    return false;
+                }
+
+                return true;
+            }
+            : tls.AllowUntrustedCertificates ? static (_, _, _, _) => true : null;
+        var ssl = new SslStream(stream, leaveInnerStreamOpen: false, validate);
         var certificates = new X509CertificateCollection();
         if (tls.ClientCertificate is not null)
         {
@@ -338,9 +370,14 @@ internal static class SocketSetup
                 ClientCertificates = certificates
             }, cancellationToken).ConfigureAwait(false);
         }
-        catch
+        catch (Exception ex)
         {
             await ssl.DisposeAsync().ConfigureAwait(false);
+            if (pinFailure is not null)
+            {
+                throw new DomeMqException(pinFailure, inner: ex);
+            }
+
             throw;
         }
 
@@ -359,45 +396,59 @@ internal static class SocketSetup
             return new SocketByteTransport(socket, remote, description, settings.TrafficObserver);
         }
 
-        TlsHandshake? handshake = null;
-        if (tls.HandshakeSelector is not null)
-        {
-            handshake = tls.HandshakeSelector();
-        }
-
-        var certificate = handshake?.ServerCertificate ?? tls.Certificate;
-        if (certificate is null)
-        {
-            throw new InvalidOperationException("TLS is enabled but no server certificate was loaded.");
-        }
-
-        var requireClient = handshake?.RequireClientCertificate ?? tls.RequireClientCertificate;
-        var allowUntrusted = handshake?.AllowUntrustedClientCertificates ?? tls.AllowUntrustedCertificates;
-        var protocols = handshake?.Protocols ?? tls.Protocols;
+        var material = tls.HandshakeSelector?.Invoke();
         var stream = new NetworkStream(socket, ownsSocket: true);
         var ssl = new SslStream(stream, leaveInnerStreamOpen: false);
+        string? serverKeyId = null;
         try
         {
-            var options = new SslServerAuthenticationOptions
+            if (material?.ByName is not null)
             {
-                ServerCertificate = certificate,
-                ClientCertificateRequired = requireClient,
-                EnabledSslProtocols = protocols,
-                CertificateRevocationCheckMode = X509RevocationMode.NoCheck
-            };
-            if (handshake?.AdditionalCertificates is { Count: > 0 } extras)
-            {
-                options.ServerCertificateContext = SslStreamCertificateContext.Create(certificate, extras);
-            }
+                var sample = material.Fallback ?? material.ByName.Values.FirstOrDefault();
+                var options = new SslServerAuthenticationOptions
+                {
+                    ClientCertificateRequired = sample?.RequireClientCertificate ?? false,
+                    EnabledSslProtocols = sample?.Protocols ?? tls.Protocols,
+                    CertificateRevocationCheckMode = X509RevocationMode.NoCheck
+                };
+                options.ServerCertificateSelectionCallback = (_, host) =>
+                {
+                    var selected = SelectHandshake(material, host);
+                    serverKeyId = selected.KeyId;
+                    options.ServerCertificateContext = selected.AdditionalCertificates is { Count: > 0 } extras
+                        ? SslStreamCertificateContext.Create(selected.ServerCertificate, extras)
+                        : null;
+                    return selected.ServerCertificate;
+                };
+                if (sample?.RequireClientCertificate == true)
+                {
+                    var roots = sample.TrustedClientRoots;
+                    var allowUntrusted = sample.AllowUntrustedClientCertificates;
+                    options.RemoteCertificateValidationCallback = (_, clientCertificate, _, _) =>
+                        ValidateClientCertificate(clientCertificate, allowUntrusted, roots);
+                }
 
-            if (requireClient)
-            {
-                var roots = handshake?.TrustedClientRoots;
-                options.RemoteCertificateValidationCallback = (_, clientCertificate, _, _) =>
-                    ValidateClientCertificate(clientCertificate, allowUntrusted, roots);
+                await ssl.AuthenticateAsServerAsync(options, cancellationToken).ConfigureAwait(false);
             }
+            else
+            {
+                var handshake = material?.Fixed;
+                var certificate = handshake?.ServerCertificate ?? tls.Certificate;
+                if (certificate is null)
+                {
+                    throw new InvalidOperationException("TLS is enabled but no server certificate was loaded.");
+                }
 
-            await ssl.AuthenticateAsServerAsync(options, cancellationToken).ConfigureAwait(false);
+                handshake ??= new TlsHandshake
+                {
+                    ServerCertificate = certificate,
+                    RequireClientCertificate = tls.RequireClientCertificate,
+                    AllowUntrustedClientCertificates = tls.AllowUntrustedCertificates,
+                    Protocols = tls.Protocols
+                };
+                serverKeyId = handshake.KeyId;
+                await ssl.AuthenticateAsServerAsync(BuildServerOptions(handshake), cancellationToken).ConfigureAwait(false);
+            }
         }
         catch
         {
@@ -405,7 +456,48 @@ internal static class SocketSetup
             throw;
         }
 
-        return new StreamByteTransport(ssl, remote, description + "+tls", settings.TrafficObserver, ssl.RemoteCertificate?.Subject);
+        return new StreamByteTransport(ssl, remote, description + "+tls", settings.TrafficObserver, ssl.RemoteCertificate?.Subject, serverKeyId);
+    }
+
+    private static TlsHandshake SelectHandshake(TlsListenerMaterial material, string? serverName)
+    {
+        if (!string.IsNullOrWhiteSpace(serverName) && material.ByName!.TryGetValue(serverName, out var match))
+        {
+            return match;
+        }
+
+        if (material.Fallback is not null)
+        {
+            return material.Fallback;
+        }
+
+        var shown = string.IsNullOrWhiteSpace(serverName) ? "missing" : serverName;
+        throw new AuthenticationException($"No server certificate for SNI '{shown}'.");
+    }
+
+    private static SslServerAuthenticationOptions BuildServerOptions(TlsHandshake handshake)
+    {
+        var options = new SslServerAuthenticationOptions
+        {
+            ServerCertificate = handshake.ServerCertificate,
+            ClientCertificateRequired = handshake.RequireClientCertificate,
+            EnabledSslProtocols = handshake.Protocols,
+            CertificateRevocationCheckMode = X509RevocationMode.NoCheck
+        };
+        if (handshake.AdditionalCertificates is { Count: > 0 } extras)
+        {
+            options.ServerCertificateContext = SslStreamCertificateContext.Create(handshake.ServerCertificate, extras);
+        }
+
+        if (handshake.RequireClientCertificate)
+        {
+            var roots = handshake.TrustedClientRoots;
+            var allowUntrusted = handshake.AllowUntrustedClientCertificates;
+            options.RemoteCertificateValidationCallback = (_, clientCertificate, _, _) =>
+                ValidateClientCertificate(clientCertificate, allowUntrusted, roots);
+        }
+
+        return options;
     }
 
     public static string DescribeTcp(EndPoint? endpoint) =>
@@ -606,6 +698,8 @@ internal sealed class SocketByteTransport : IByteTransport
 
     public string? PeerCertificateSubject => null;
 
+    public string? ServerKeyId => null;
+
     public async ValueTask SendAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken)
     {
         var sent = 0;
@@ -663,13 +757,14 @@ internal sealed class StreamByteTransport : IByteTransport
 
     private readonly ITrafficObserver? _observer;
 
-    public StreamByteTransport(Stream stream, IPAddress? remoteAddress, string description, ITrafficObserver? observer = null, string? peerCertificateSubject = null)
+    public StreamByteTransport(Stream stream, IPAddress? remoteAddress, string description, ITrafficObserver? observer = null, string? peerCertificateSubject = null, string? serverKeyId = null)
     {
         _stream = stream;
         RemoteAddress = remoteAddress;
         Description = description;
         _observer = observer;
         PeerCertificateSubject = peerCertificateSubject;
+        ServerKeyId = serverKeyId;
     }
 
     public IPAddress? RemoteAddress { get; }
@@ -677,6 +772,8 @@ internal sealed class StreamByteTransport : IByteTransport
     public string Description { get; }
 
     public string? PeerCertificateSubject { get; }
+
+    public string? ServerKeyId { get; }
 
     public async ValueTask SendAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken)
     {

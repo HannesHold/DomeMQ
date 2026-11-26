@@ -218,6 +218,9 @@ public partial class ClientRow : ObservableObject
     private string _certificate = "";
 
     [ObservableProperty]
+    private string _keyId = "";
+
+    [ObservableProperty]
     private string _state = "";
 
     [ObservableProperty]
@@ -428,6 +431,7 @@ public partial class ServerViewModel : ObservableObject
             row.Endpoint = snapshot.Endpoint;
             row.ConnectedAt = snapshot.ConnectedAt.ToLocalTime().ToString("HH:mm:ss");
             row.Certificate = string.IsNullOrEmpty(snapshot.Certificate) ? "—" : snapshot.Certificate;
+            row.KeyId = string.IsNullOrEmpty(snapshot.KeyId) ? "—" : snapshot.KeyId;
             row.State = snapshot.Connected ? "connected" : "closed";
             row.Messages = $"{counters.InMessages} in / {counters.OutMessages} out";
             row.Bytes = $"{Format.Bytes(counters.InBytes)} in / {Format.Bytes(counters.OutBytes)} out";

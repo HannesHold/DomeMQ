@@ -209,6 +209,12 @@ public sealed class KeyPairOptions
     public MaterialSource? Certificate { get; set; }
 
     public MaterialSource? Password { get; set; }
+
+    /// <summary>SNI name for <see cref="TlsOptions.KeyMode"/> <c>PerClient</c>. Combined with <see cref="ServerNames"/>.</summary>
+    public string? ServerName { get; set; }
+
+    /// <summary>Additional SNI names for this key. Compared case-insensitively.</summary>
+    public List<string> ServerNames { get; set; } = [];
 }
 
 /// <summary>
@@ -228,10 +234,16 @@ public sealed class TlsOptions
 {
     public bool Enabled { get; set; }
 
+    /// <summary><c>PerServer</c> presents <see cref="KeyId"/> to every connection. <c>PerClient</c> selects a key from the TLS server name.</summary>
+    public string KeyMode { get; set; } = "PerServer";
+
     /// <summary>
-    /// <see cref="KeyPairOptions.Id"/> to present. When null and exactly one key is configured, that key is used.
+    /// <see cref="KeyPairOptions.Id"/> to present in <c>PerServer</c> mode. When null and exactly one key is configured, that key is used.
     /// </summary>
     public string? KeyId { get; set; }
+
+    /// <summary>Key used when <c>PerClient</c> mode sees an unknown or missing server name. Null rejects the handshake.</summary>
+    public string? FallbackKeyId { get; set; }
 
     public bool RequireClientCertificate { get; set; }
 
