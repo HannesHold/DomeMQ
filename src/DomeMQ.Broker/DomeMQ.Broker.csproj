@@ -4,6 +4,7 @@
     <RootNamespace>DomeMQ.Broker</RootNamespace>
     <AssemblyName>DomeMQ.Broker</AssemblyName>
     <Description>Standalone DomeMQ broker host.</Description>
+    <ApplicationIcon>../../assets/icon/domemq.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\DomeMQ.Server\DomeMQ.Server.csproj" />

@@ -15,8 +15,13 @@
     <RepositoryUrl>https://github.com/HannesHold/DomeMQ</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <PackageIcon>domemq-icon-128.png</PackageIcon>
     <IsPackable>false</IsPackable>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)assets/icon/domemq-icon-128.png" Pack="true" PackagePath="\" />
+  </ItemGroup>
 </Project>

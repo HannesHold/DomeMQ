@@ -8,7 +8,13 @@
     <InvariantGlobalization>false</InvariantGlobalization>
     <Description>DomeMQ server and client inspector.</Description>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <ApplicationIcon>../../assets/icon/domemq.ico</ApplicationIcon>
   </PropertyGroup>
+  <ItemGroup>
+    <AvaloniaResource Include="../../assets/icon/domemq-icon-256.png">
+      <Link>Assets/domemq-icon-256.png</Link>
+    </AvaloniaResource>
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\DomeMQ.Client\DomeMQ.Client.csproj" />
     <ProjectReference Include="..\..\src\DomeMQ.Server\DomeMQ.Server.csproj" />

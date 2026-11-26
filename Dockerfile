@@ -4,6 +4,7 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 ARG VERSION=0.1.0
 WORKDIR /src
 COPY Directory.Build.props ./
+COPY assets/icon/domemq.ico assets/icon/domemq.ico
 COPY src/DomeMQ.Protocol/ src/DomeMQ.Protocol/
 COPY src/DomeMQ.Server/ src/DomeMQ.Server/
 COPY src/DomeMQ.Broker/ src/DomeMQ.Broker/

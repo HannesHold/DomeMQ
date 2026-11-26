@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/icon/domemq-icon-128.png" alt="DomeMQ" width="128" />
+</p>
+
 # DomeMQ
 
 DomeMQ is a small, cross-platform IPC message broker for .NET. Processes connect over TCP or Unix domain sockets, create their own channels (`Queue`, `Stack`, or `Bag`), and exchange opaque byte payloads. The wire protocol is documented and has no third-party serializer, so a client can be written in any language.
