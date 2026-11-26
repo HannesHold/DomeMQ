@@ -1,0 +1,29 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="DomeMQ.Inspector.Views.TestsView">
+  <DockPanel>
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,12">
+      <TextBlock Classes="title" Text="Tests" VerticalAlignment="Center"/>
+      <Button Classes="accent" Content="Run all" Command="{Binding RunAllCommand}" VerticalAlignment="Center"/>
+    </StackPanel>
+    <Border Classes="card">
+      <ListBox ItemsSource="{Binding Scenarios}">
+        <ListBox.ItemTemplate>
+          <DataTemplate>
+            <Grid ColumnDefinitions="160,*,90,70,Auto,Auto" Margin="0,6" ColumnSpacing="8">
+              <TextBlock Text="{Binding Name}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+              <StackPanel Grid.Column="1" Spacing="2">
+                <TextBlock Classes="muted" Text="{Binding Explanation}" TextWrapping="Wrap"/>
+                <TextBlock Text="{Binding Detail}" TextWrapping="Wrap"/>
+              </StackPanel>
+              <TextBlock Grid.Column="2" Text="{Binding State}" VerticalAlignment="Center"/>
+              <TextBlock Grid.Column="3" Classes="mono" Text="{Binding Duration}" VerticalAlignment="Center"/>
+              <Button Grid.Column="4" Classes="quiet" Content="Run" Command="{Binding RunCommand}" VerticalAlignment="Center"/>
+              <Button Grid.Column="5" Classes="quiet" Content="Frames" Command="{Binding ShowCommand}" VerticalAlignment="Center"/>
+            </Grid>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+    </Border>
+  </DockPanel>
+</UserControl>

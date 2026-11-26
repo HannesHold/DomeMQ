@@ -5,6 +5,24 @@ using DomeMQ;
 
 namespace DomeMQ.Server;
 
+public interface IBrokerConnectionObserver
+{
+    void OnConnected(BrokerConnectionSnapshot snapshot);
+
+    void OnDisconnected(string id);
+}
+
+public sealed class BrokerConnectionSnapshot
+{
+    public required string Id { get; init; }
+
+    public required string Remote { get; init; }
+
+    public required DateTimeOffset ConnectedAt { get; init; }
+
+    public string? ClientCertificateSubject { get; init; }
+}
+
 public sealed class ListenerInfo
 {
     public required string Name { get; init; }
@@ -41,6 +59,12 @@ public sealed class DomeMqBroker : IAsyncDisposable
     }
 
     public event EventHandler<QueuePressure>? QueuePressure;
+
+    /// <summary>Set before <see cref="StartAsync"/> to record every accepted connection.</summary>
+    public IBrokerConnectionObserver? ConnectionObserver { get; set; }
+
+    /// <summary>Set before <see cref="StartAsync"/>. Each accepted connection reports partial reads and writes.</summary>
+    public ITrafficObserver? TrafficObserver { get; set; }
 
     public BrokerStatistics GetStatistics() => _engine.GetStatistics();
 
@@ -192,6 +216,7 @@ public sealed class DomeMqBroker : IAsyncDisposable
             Backlog = listener.Backlog ?? tcp.Backlog,
             LingerSeconds = listener.LingerSeconds ?? tcp.LingerSeconds,
             DeleteStaleSocket = listener.DeleteStaleSocket ?? _options.Unix.DeleteStaleSocket,
+            TrafficObserver = TrafficObserver,
             UnixPermissions = DomeMqOptionsValidator.ParseUnixMode(listener.Permissions ?? _options.Unix.Permissions),
             Tls = tls
         };
@@ -256,8 +281,22 @@ public sealed class DomeMqBroker : IAsyncDisposable
     {
         var writer = new FrameWriter(transport, _options.Timeouts.WriteTimeout);
         using var connectionStop = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
+        var connectedAt = DateTimeOffset.UtcNow;
         try
         {
+            try
+            {
+                ConnectionObserver?.OnConnected(new BrokerConnectionSnapshot
+                {
+                    Id = session.PublicId,
+                    Remote = transport.Description,
+                    ConnectedAt = connectedAt,
+                    ClientCertificateSubject = transport.PeerCertificateSubject
+                });
+            }
+            catch (Exception)
+            {
+            }
             var cap = new Func<FrameHeader, int>(header => PayloadLimits.InboundFrameCap(header.Type, session.ConnectionPayloadLimit));
             Frame frame;
             try
@@ -368,6 +407,14 @@ public sealed class DomeMqBroker : IAsyncDisposable
         }
         finally
         {
+            try
+            {
+                ConnectionObserver?.OnDisconnected(session.PublicId);
+            }
+            catch (Exception)
+            {
+            }
+
             _engine.DropSession(session);
             Interlocked.Decrement(ref _clients);
             await transport.DisposeAsync().ConfigureAwait(false);

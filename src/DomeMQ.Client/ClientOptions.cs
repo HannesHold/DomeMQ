@@ -37,6 +37,9 @@ public sealed class DomeMqClientOptions
     public TimeSpan WriteTimeout { get; set; } = TimeSpan.FromMinutes(2);
 
     public TlsClientOptions? Tls { get; set; }
+
+    /// <summary>Optional tap for every byte read from or written to the broker.</summary>
+    public ITrafficObserver? TrafficObserver { get; set; }
 }
 
 public sealed class TlsClientOptions
@@ -121,13 +124,17 @@ public sealed class ChannelInfo
 /// <summary>One popped application message. <see cref="Body"/> is opaque.</summary>
 public sealed class DomeMqMessage
 {
-    public DomeMqMessage(byte[] body, string contentType)
+    public DomeMqMessage(byte[] body, string contentType, uint requestId = 0)
     {
         Body = body;
         ContentType = contentType;
+        RequestId = requestId;
     }
 
     public byte[] Body { get; }
 
     public string ContentType { get; }
+
+    /// <summary>Request id of the <c>Pop</c> that delivered this message.</summary>
+    public uint RequestId { get; }
 }

@@ -19,6 +19,9 @@ public interface IByteTransport : IAsyncDisposable
 
     /// <summary>Reads at least one byte, or returns 0 when the peer has closed.</summary>
     ValueTask<int> ReceiveAsync(Memory<byte> buffer, CancellationToken cancellationToken);
+
+    /// <summary>Subject of the peer certificate after a TLS handshake. Null when the connection is not TLS or the peer sent no certificate.</summary>
+    string? PeerCertificateSubject { get; }
 }
 
 /// <summary>A bound listener that accepts <see cref="IByteTransport"/> connections.</summary>
@@ -79,6 +82,9 @@ public sealed class TransportSettings
     public int? UnixPermissions { get; init; }
 
     public TlsParameters? Tls { get; init; }
+
+    /// <summary>Optional tap. Each partial read and write is reported.</summary>
+    public ITrafficObserver? TrafficObserver { get; init; }
 }
 
 /// <summary>TLS parameters. Used for TCP only.</summary>
@@ -203,7 +209,7 @@ public sealed class UnixSocketTransportFactory : ITransportFactory
         {
             SocketSetup.ApplyBuffers(socket, settings);
             await socket.ConnectAsync(new UnixDomainSocketEndPoint(settings.Path), cancellationToken).ConfigureAwait(false);
-            return new SocketByteTransport(socket, remoteAddress: null, $"unix://{settings.Path}");
+            return new SocketByteTransport(socket, remoteAddress: null, $"unix://{settings.Path}", settings.TrafficObserver);
         }
         catch
         {
@@ -308,7 +314,7 @@ internal static class SocketSetup
         var description = DescribeTcp(socket.RemoteEndPoint);
         if (settings.Tls is not { Enabled: true } tls)
         {
-            return new SocketByteTransport(socket, remote, description);
+            return new SocketByteTransport(socket, remote, description, settings.TrafficObserver);
         }
 
         var stream = new NetworkStream(socket, ownsSocket: true);
@@ -338,7 +344,7 @@ internal static class SocketSetup
             throw;
         }
 
-        return new StreamByteTransport(ssl, remote, description + "+tls");
+        return new StreamByteTransport(ssl, remote, description + "+tls", settings.TrafficObserver, ssl.RemoteCertificate?.Subject);
     }
 
     public static async ValueTask<IByteTransport> WrapServerAsync(
@@ -350,7 +356,7 @@ internal static class SocketSetup
         var description = DescribeTcp(socket.RemoteEndPoint);
         if (settings.Tls is not { Enabled: true } tls)
         {
-            return new SocketByteTransport(socket, remote, description);
+            return new SocketByteTransport(socket, remote, description, settings.TrafficObserver);
         }
 
         TlsHandshake? handshake = null;
@@ -399,7 +405,7 @@ internal static class SocketSetup
             throw;
         }
 
-        return new StreamByteTransport(ssl, remote, description + "+tls");
+        return new StreamByteTransport(ssl, remote, description + "+tls", settings.TrafficObserver, ssl.RemoteCertificate?.Subject);
     }
 
     public static string DescribeTcp(EndPoint? endpoint) =>
@@ -515,9 +521,11 @@ internal sealed class UnixListener : ITransportListener
 {
     private readonly Socket _socket;
     private readonly string _path;
+    private readonly TransportSettings _settings;
 
     public UnixListener(TransportSettings settings)
     {
+        _settings = settings;
         if (string.IsNullOrWhiteSpace(settings.Path))
         {
             throw new ArgumentException("Unix socket path is required.", nameof(settings));
@@ -557,7 +565,7 @@ internal sealed class UnixListener : ITransportListener
     public async ValueTask<IByteTransport> AcceptAsync(CancellationToken cancellationToken)
     {
         var accepted = await _socket.AcceptAsync(cancellationToken).ConfigureAwait(false);
-        return new SocketByteTransport(accepted, remoteAddress: null, Description);
+        return new SocketByteTransport(accepted, remoteAddress: null, Description, _settings.TrafficObserver);
     }
 
     public ValueTask DisposeAsync()
@@ -582,16 +590,21 @@ internal sealed class SocketByteTransport : IByteTransport
 {
     private readonly Socket _socket;
 
-    public SocketByteTransport(Socket socket, IPAddress? remoteAddress, string description)
+    private readonly ITrafficObserver? _observer;
+
+    public SocketByteTransport(Socket socket, IPAddress? remoteAddress, string description, ITrafficObserver? observer = null)
     {
         _socket = socket;
         RemoteAddress = remoteAddress;
         Description = description;
+        _observer = observer;
     }
 
     public IPAddress? RemoteAddress { get; }
 
     public string Description { get; }
+
+    public string? PeerCertificateSubject => null;
 
     public async ValueTask SendAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken)
     {
@@ -604,12 +617,38 @@ internal sealed class SocketByteTransport : IByteTransport
                 throw new IOException("Socket send returned zero bytes.");
             }
 
+            Observe(TrafficDirection.Outbound, data.Span.Slice(sent, count));
             sent += count;
         }
     }
 
-    public ValueTask<int> ReceiveAsync(Memory<byte> buffer, CancellationToken cancellationToken) =>
-        _socket.ReceiveAsync(buffer, SocketFlags.None, cancellationToken);
+    public async ValueTask<int> ReceiveAsync(Memory<byte> buffer, CancellationToken cancellationToken)
+    {
+        var count = await _socket.ReceiveAsync(buffer, SocketFlags.None, cancellationToken).ConfigureAwait(false);
+        if (count > 0)
+        {
+            Observe(TrafficDirection.Inbound, buffer.Span[..count]);
+        }
+
+        return count;
+    }
+
+    private void Observe(TrafficDirection direction, ReadOnlySpan<byte> data)
+    {
+        if (_observer is null || data.Length == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            _observer.OnChunk(new TrafficChunk(DateTimeOffset.UtcNow, direction, Description, data.ToArray()));
+        }
+        catch (Exception)
+        {
+            // Observers must not break the connection.
+        }
+    }
 
     public ValueTask DisposeAsync()
     {
@@ -622,25 +661,56 @@ internal sealed class StreamByteTransport : IByteTransport
 {
     private readonly Stream _stream;
 
-    public StreamByteTransport(Stream stream, IPAddress? remoteAddress, string description)
+    private readonly ITrafficObserver? _observer;
+
+    public StreamByteTransport(Stream stream, IPAddress? remoteAddress, string description, ITrafficObserver? observer = null, string? peerCertificateSubject = null)
     {
         _stream = stream;
         RemoteAddress = remoteAddress;
         Description = description;
+        _observer = observer;
+        PeerCertificateSubject = peerCertificateSubject;
     }
 
     public IPAddress? RemoteAddress { get; }
 
     public string Description { get; }
 
+    public string? PeerCertificateSubject { get; }
+
     public async ValueTask SendAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken)
     {
         await _stream.WriteAsync(data, cancellationToken).ConfigureAwait(false);
         await _stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+        Observe(TrafficDirection.Outbound, data.Span);
     }
 
-    public ValueTask<int> ReceiveAsync(Memory<byte> buffer, CancellationToken cancellationToken) =>
-        _stream.ReadAsync(buffer, cancellationToken);
+    public async ValueTask<int> ReceiveAsync(Memory<byte> buffer, CancellationToken cancellationToken)
+    {
+        var count = await _stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+        if (count > 0)
+        {
+            Observe(TrafficDirection.Inbound, buffer.Span[..count]);
+        }
+
+        return count;
+    }
+
+    private void Observe(TrafficDirection direction, ReadOnlySpan<byte> data)
+    {
+        if (_observer is null || data.Length == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            _observer.OnChunk(new TrafficChunk(DateTimeOffset.UtcNow, direction, Description, data.ToArray()));
+        }
+        catch (Exception)
+        {
+        }
+    }
 
     public ValueTask DisposeAsync() => _stream.DisposeAsync();
 }

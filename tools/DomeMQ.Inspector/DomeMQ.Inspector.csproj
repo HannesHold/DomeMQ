@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>DomeMQ.Inspector</RootNamespace>
+    <AssemblyName>DomeMQ.Inspector</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <Description>DomeMQ server and client inspector.</Description>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\DomeMQ.Client\DomeMQ.Client.csproj" />
+    <ProjectReference Include="..\..\src\DomeMQ.Server\DomeMQ.Server.csproj" />
+    <PackageReference Include="Avalonia" Version="12.2.0" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.2.0" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.2.0" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.2.0" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="ScottPlot.Avalonia" Version="5.1.59" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.15" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.15" />
+  </ItemGroup>
+</Project>

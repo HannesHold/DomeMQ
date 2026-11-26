@@ -164,7 +164,7 @@ public sealed class DomeMqClient : IAsyncDisposable
                 throw new PayloadTooLargeException(message.Body.Length, limit);
             }
 
-            messages.Add(new DomeMqMessage(message.Body, message.ContentType));
+            messages.Add(new DomeMqMessage(message.Body, message.ContentType, frame.RequestId));
         }
 
         return messages;
@@ -262,7 +262,8 @@ public sealed class DomeMqClient : IAsyncDisposable
             Host = _options.Host,
             Port = _options.Port,
             Path = _options.Path,
-            Tls = BuildTls()
+            Tls = BuildTls(),
+            TrafficObserver = _options.TrafficObserver
         };
         var factory = TransportRegistry.Resolve(_options.Transport);
         _transport = await factory.ConnectAsync(settings, cancellationToken).ConfigureAwait(false);

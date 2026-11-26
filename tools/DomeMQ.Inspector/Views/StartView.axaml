@@ -1,0 +1,23 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="DomeMQ.Inspector.Views.StartView">
+  <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="18" MaxWidth="760">
+    <TextBlock Classes="title" Text="Start the inspector" HorizontalAlignment="Center"/>
+    <TextBlock Classes="muted" TextAlignment="Center" TextWrapping="Wrap"
+               Text="The same executable is a server or a client. You can also start it with --mode server or --mode client."/>
+    <UniformGrid Columns="2" Margin="0,8,0,0">
+      <Button Classes="quiet" Margin="0,0,8,0" Padding="22" Command="{Binding ChooseCommand}" CommandParameter="server">
+        <StackPanel Spacing="8">
+          <TextBlock Text="Server" FontSize="20" FontWeight="SemiBold"/>
+          <TextBlock Classes="muted" TextWrapping="Wrap" Text="Embed a broker, watch clients, channels, pressure, and the hex log."/>
+        </StackPanel>
+      </Button>
+      <Button Classes="quiet" Margin="8,0,0,0" Padding="22" Command="{Binding ChooseCommand}" CommandParameter="client">
+        <StackPanel Spacing="8">
+          <TextBlock Text="Client" FontSize="20" FontWeight="SemiBold"/>
+          <TextBlock Classes="muted" TextWrapping="Wrap" Text="Connect, stress a channel, receive, and run the scenario list."/>
+        </StackPanel>
+      </Button>
+    </UniformGrid>
+  </StackPanel>
+</UserControl>

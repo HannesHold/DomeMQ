@@ -324,7 +324,7 @@ internal sealed class BrokerEngine
                 return Error(frame, ErrorCode.TooManyChannels, "The per-client channel limit has been reached.");
             }
 
-            var channel = new BrokerChannel(body.Name, kind, maxMessages, maxBytes, fullPolicy, channelPayload, session.Id, _accounting);
+            var channel = new BrokerChannel(body.Name, kind, maxMessages, maxBytes, fullPolicy, channelPayload, session.Id, session.PublicId, _accounting);
             _channels.Add(body.Name, channel);
             session.OwnedChannels.Add(body.Name);
         }
@@ -661,6 +661,7 @@ internal sealed class BrokerChannel
         FullPolicy fullPolicy,
         int? maxPayloadSize,
         Guid ownerId,
+        string owner,
         QueueAccounting accounting)
     {
         Name = name;
@@ -670,6 +671,7 @@ internal sealed class BrokerChannel
         FullPolicy = fullPolicy;
         MaxPayloadSize = maxPayloadSize;
         OwnerId = ownerId;
+        Owner = owner;
         _accounting = accounting;
     }
 
@@ -686,6 +688,8 @@ internal sealed class BrokerChannel
     public int? MaxPayloadSize { get; }
 
     public Guid OwnerId { get; }
+
+    public string Owner { get; }
 
     private bool _removed;
     private DateTimeOffset? _orphanDeadline;
@@ -750,7 +754,8 @@ internal sealed class BrokerChannel
                 FillPercent = FillPercent(),
                 DroppedMessages = _dropped,
                 ClearedMessages = _cleared,
-                WarningActive = _warningActive
+                WarningActive = _warningActive,
+                Owner = Owner
             };
         }
     }

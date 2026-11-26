@@ -20,6 +20,9 @@ jobs:
           dotnet-version: 10.0.x
       - name: Test
         run: dotnet test DomeMQ.sln -c Release --nologo
+
+      - name: Build inspector
+        run: dotnet build tools/DomeMQ.Inspector/DomeMQ.Inspector.csproj -c Release --nologo
         env:
           DOTNET_CLI_TELEMETRY_OPTOUT: 1
           DOTNET_NOLOGO: 1

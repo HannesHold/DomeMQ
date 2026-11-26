@@ -1,0 +1,73 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:sp="using:ScottPlot.Avalonia"
+             x:Class="DomeMQ.Inspector.Views.OverviewView">
+  <DockPanel>
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,14">
+      <TextBox PlaceholderText="Config JSON (empty uses defaults)" Text="{Binding ConfigPath}" Width="420"/>
+      <Button Classes="accent" Content="Start" Command="{Binding StartCommand}"/>
+      <Button Classes="quiet" Content="Stop" Command="{Binding StopCommand}"/>
+      <Border Classes="pill">
+        <TextBlock Text="{Binding Status}"/>
+      </Border>
+    </StackPanel>
+    <ScrollViewer>
+      <StackPanel Spacing="14">
+        <UniformGrid Columns="4">
+          <Border Classes="card" Margin="0,0,10,0">
+            <StackPanel Spacing="4">
+              <TextBlock Classes="muted" Text="Messages / s"/>
+              <TextBlock Classes="metric" Text="{Binding MessagesPerSecond}"/>
+            </StackPanel>
+          </Border>
+          <Border Classes="card" Margin="0,0,10,0">
+            <StackPanel Spacing="4">
+              <TextBlock Classes="muted" Text="Bytes / s"/>
+              <TextBlock Classes="metric" Text="{Binding BytesPerSecond}" FontSize="20"/>
+            </StackPanel>
+          </Border>
+          <Border Classes="card" Margin="0,0,10,0">
+            <StackPanel Spacing="6">
+              <TextBlock Classes="muted" Text="Queued bytes"/>
+              <TextBlock Text="{Binding QueuedText}"/>
+              <ProgressBar Minimum="0" Maximum="100" Value="{Binding QueuedPercent}" Foreground="{Binding QueuedBrush}"/>
+            </StackPanel>
+          </Border>
+          <Border Classes="card">
+            <StackPanel Spacing="4">
+              <TextBlock Classes="muted" Text="Errors by code"/>
+              <TextBlock Text="{Binding ErrorSummary}" TextWrapping="Wrap"/>
+              <TextBlock Classes="muted" Text="{Binding DroppedText}"/>
+            </StackPanel>
+          </Border>
+        </UniformGrid>
+        <Border Classes="card">
+          <StackPanel>
+            <TextBlock Classes="section" Text="Throughput"/>
+            <sp:AvaPlot x:Name="Plot" Height="200"/>
+          </StackPanel>
+        </Border>
+        <Grid ColumnDefinitions="*,*">
+          <Border Classes="card" Margin="0,0,10,0">
+            <DockPanel>
+              <TextBlock DockPanel.Dock="Top" Classes="section" Text="Queue pressure"/>
+              <ListBox ItemsSource="{Binding Pressure}">
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock Classes="mono" Text="{Binding}"/>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </DockPanel>
+          </Border>
+          <Border Grid.Column="1" Classes="card">
+            <DockPanel>
+              <TextBlock DockPanel.Dock="Top" Classes="section" Text="Configuration"/>
+              <TextBlock Classes="mono" Text="{Binding ConfigSummary}" TextWrapping="Wrap"/>
+            </DockPanel>
+          </Border>
+        </Grid>
+      </StackPanel>
+    </ScrollViewer>
+  </DockPanel>
+</UserControl>

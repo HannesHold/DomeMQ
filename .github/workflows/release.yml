@@ -74,6 +74,26 @@ jobs:
             (cd dist && zip -r "DomeMQ-$ver-$rid.zip" "DomeMQ-$ver-$rid")
           done
 
+      - name: Publish inspector
+        run: |
+          ver="${{ steps.version.outputs.version }}"
+          mkdir -p dist
+          for rid in win-x64 linux-x64; do
+            out="dist/inspector-publish-$rid"
+            stage="dist/DomeMQ-Inspector-$ver-$rid"
+            rm -rf "$out" "$stage"
+            dotnet publish tools/DomeMQ.Inspector/DomeMQ.Inspector.csproj \
+              -c Release \
+              -r "$rid" \
+              --self-contained true \
+              -p:PublishSingleFile=false \
+              -p:Version="$ver" \
+              -o "$out"
+            mkdir -p "$stage"
+            cp -a "$out"/. "$stage"/
+            (cd dist && zip -r "DomeMQ-Inspector-$ver-$rid.zip" "DomeMQ-Inspector-$ver-$rid")
+          done
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -98,5 +118,7 @@ jobs:
             "dist/DomeMQ-$ver-win-x64.zip" \
             "dist/DomeMQ-$ver-linux-x64.zip" \
             "dist/DomeMQ-$ver-linux-arm64.zip" \
+            "dist/DomeMQ-Inspector-$ver-win-x64.zip" \
+            "dist/DomeMQ-Inspector-$ver-linux-x64.zip" \
             --title "DomeMQ $GITHUB_REF_NAME" \
-            --notes "DomeMQ ${ver}. Container ghcr.io/${{ steps.version.outputs.image }}:${ver}. NuGet packages use the same version when NUGET_API_KEY is configured."
+            --notes "DomeMQ ${ver}. Container ghcr.io/${{ steps.version.outputs.image }}:${ver}. NuGet packages use the same version when NUGET_API_KEY is configured. Inspector zips are self-contained win-x64 and linux-x64 folders."

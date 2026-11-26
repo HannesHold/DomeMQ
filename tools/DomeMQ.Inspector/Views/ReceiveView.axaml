@@ -1,0 +1,76 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:conv="using:DomeMQ.Inspector.Converters"
+             xmlns:sp="using:ScottPlot.Avalonia"
+             x:Class="DomeMQ.Inspector.Views.ReceiveView">
+  <Grid RowDefinitions="Auto,*,160">
+    <StackPanel Spacing="8" Margin="0,0,0,10">
+      <TextBlock Classes="title" Text="Receive"/>
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <TextBox Width="240" PlaceholderText="Channel" Text="{Binding ReceiveChannel}"/>
+        <Button Classes="accent" Content="Pop" Command="{Binding PopOnceCommand}"/>
+        <ToggleButton Classes="quiet" Content="Auto" IsChecked="{Binding AutoReceive}"/>
+        <Button Classes="quiet" Content="Clear" Command="{Binding ClearReceivedCommand}"/>
+        <Button Classes="quiet" Content="Export" Command="{Binding ExportReceivedCommand}"/>
+        <TextBox Width="280" PlaceholderText="Export path" Text="{Binding ExportPath}"/>
+      </StackPanel>
+      <TextBlock Classes="mono" Text="{Binding ReceiveStats}"/>
+    </StackPanel>
+    <Grid Grid.Row="1" ColumnDefinitions="1.1*,*">
+      <Border Classes="card" Margin="0,0,10,0">
+        <DockPanel>
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="100,*,70,80" Margin="0,0,0,6">
+            <TextBlock Classes="muted" Text="Time"/>
+            <TextBlock Grid.Column="1" Classes="muted" Text="Channel"/>
+            <TextBlock Grid.Column="2" Classes="muted" Text="Size"/>
+            <TextBlock Grid.Column="3" Classes="muted" Text="Request"/>
+          </Grid>
+          <ListBox ItemsSource="{Binding Received}" SelectedItem="{Binding SelectedMessage}">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <Grid ColumnDefinitions="100,*,70,80">
+                  <TextBlock Classes="mono" Text="{Binding TimeLabel}"/>
+                  <TextBlock Grid.Column="1" Text="{Binding Channel}"/>
+                  <TextBlock Grid.Column="2" Text="{Binding Size}"/>
+                  <TextBlock Grid.Column="3" Text="{Binding RequestId}"/>
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </DockPanel>
+      </Border>
+      <Border Grid.Column="1" Classes="card" Background="#241C12" BorderBrush="#6A4A1E">
+        <DockPanel>
+          <ComboBox DockPanel.Dock="Top" ItemsSource="{Binding Views}" SelectedItem="{Binding MessageView}" HorizontalAlignment="Left" Margin="0,0,0,8"/>
+          <ListBox ItemsSource="{Binding MessageRows}" IsVisible="{Binding ShowHex}">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <Grid ColumnDefinitions="48,*,150">
+                  <TextBlock Classes="mono" Foreground="#8B95A8" Text="{Binding Offset}"/>
+                  <ItemsControl Grid.Column="1" ItemsSource="{Binding Cells}">
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate>
+                        <StackPanel Orientation="Horizontal" Spacing="4"/>
+                      </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <TextBlock Classes="mono" Text="{Binding Text}" Foreground="{Binding IsHeader, Converter={x:Static conv:HexBrushConverter.Instance}}"/>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                  <TextBlock Grid.Column="2" Classes="mono" Text="{Binding Ascii}"/>
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <TextBox IsReadOnly="True" AcceptsReturn="True" Text="{Binding MessageText}" Background="#2A2116" Foreground="#F0C674" BorderThickness="0"
+                   IsVisible="{Binding ShowText}"/>
+        </DockPanel>
+      </Border>
+    </Grid>
+    <Border Grid.Row="2" Classes="card" Margin="0,10,0,0">
+      <sp:AvaPlot x:Name="Plot"/>
+    </Border>
+  </Grid>
+</UserControl>

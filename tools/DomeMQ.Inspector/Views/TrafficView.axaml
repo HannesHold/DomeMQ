@@ -1,0 +1,81 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:conv="using:DomeMQ.Inspector.Converters"
+             x:Class="DomeMQ.Inspector.Views.TrafficView">
+  <Grid RowDefinitions="Auto,*,220">
+    <StackPanel Spacing="8" Margin="0,0,0,8">
+      <TextBlock Classes="title" Text="Hex log"/>
+      <WrapPanel Orientation="Horizontal">
+        <ComboBox Width="90" Margin="0,0,8,8" ItemsSource="{Binding Directions}" SelectedItem="{Binding Direction}"/>
+        <TextBox Width="120" Margin="0,0,8,8" PlaceholderText="Type" Text="{Binding TypeFilter}"/>
+        <TextBox Width="160" Margin="0,0,8,8" PlaceholderText="Endpoint" Text="{Binding EndpointFilter}"/>
+        <TextBox Width="140" Margin="0,0,8,8" PlaceholderText="Channel" Text="{Binding ChannelFilter}"/>
+        <TextBox Width="110" Margin="0,0,8,8" PlaceholderText="Request id" Text="{Binding RequestFilter}"/>
+        <NumericUpDown Width="110" Margin="0,0,8,8" Minimum="200" Maximum="20000" Value="{Binding Capacity}"/>
+        <ToggleButton Classes="quiet" Margin="0,0,8,8" Content="Pause" IsChecked="{Binding Paused}"/>
+        <ToggleButton Classes="quiet" Margin="0,0,8,8" Content="Auto-scroll" IsChecked="{Binding AutoScroll}"/>
+        <ToggleButton Classes="quiet" Margin="0,0,8,8" Content="Reassemble" IsChecked="{Binding Reassemble}"/>
+        <Button Classes="accent" Margin="0,0,8,8" Content="Apply" Command="{Binding ApplyFiltersCommand}"/>
+        <Button Classes="quiet" Margin="0,0,8,8" Content="Clear view" Command="{Binding ClearCommand}"/>
+        <Button Classes="quiet" Margin="0,0,8,8" Content="Export" Command="{Binding ExportCommand}"/>
+      </WrapPanel>
+      <TextBlock Classes="muted" Text="{Binding Status}"/>
+    </StackPanel>
+    <Border Grid.Row="1" Classes="card" Padding="8">
+      <DockPanel>
+        <Grid DockPanel.Dock="Top" ColumnDefinitions="90,50,160,70,80,*" Margin="4,0,4,6">
+          <TextBlock Classes="muted" Text="Time"/>
+          <TextBlock Grid.Column="1" Classes="muted" Text="Dir"/>
+          <TextBlock Grid.Column="2" Classes="muted" Text="Endpoint"/>
+          <TextBlock Grid.Column="3" Classes="muted" Text="Length"/>
+          <TextBlock Grid.Column="4" Classes="muted" Text="Type"/>
+          <TextBlock Grid.Column="5" Classes="muted" Text="Summary"/>
+        </Grid>
+        <ListBox x:Name="FrameList" ItemsSource="{Binding Entries}" SelectedItem="{Binding Selected}">
+          <ListBox.ItemTemplate>
+            <DataTemplate>
+              <Grid ColumnDefinitions="90,50,160,70,80,*">
+                <TextBlock Classes="mono" Text="{Binding TimeLabel}"/>
+                <TextBlock Grid.Column="1" Text="{Binding DirectionLabel}"/>
+                <TextBlock Grid.Column="2" Classes="mono" Text="{Binding Endpoint}" TextTrimming="CharacterEllipsis"/>
+                <TextBlock Grid.Column="3" Text="{Binding Length}"/>
+                <TextBlock Grid.Column="4" Text="{Binding TypeName}"/>
+                <TextBlock Grid.Column="5" Text="{Binding Summary}" TextTrimming="CharacterEllipsis"/>
+              </Grid>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </DockPanel>
+    </Border>
+    <Border Grid.Row="2" Classes="card" Margin="0,10,0,0" Background="#12151C">
+      <Grid ColumnDefinitions="280,*">
+        <TextBlock Classes="mono" Text="{Binding HeaderText}" TextWrapping="Wrap" Foreground="#8AB4FF" Margin="0,0,12,0"/>
+        <DockPanel Grid.Column="1">
+          <TextBlock DockPanel.Dock="Bottom" Classes="muted" Text="{Binding Truncated}"/>
+          <ListBox ItemsSource="{Binding Rows}" Background="Transparent">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <Grid ColumnDefinitions="48,*,160">
+                  <TextBlock Classes="mono" Foreground="#8B95A8" Text="{Binding Offset}"/>
+                  <ItemsControl Grid.Column="1" ItemsSource="{Binding Cells}">
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate>
+                        <StackPanel Orientation="Horizontal" Spacing="4"/>
+                      </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <TextBlock Classes="mono" Text="{Binding Text}" Foreground="{Binding IsHeader, Converter={x:Static conv:HexBrushConverter.Instance}}"/>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                  <TextBlock Grid.Column="2" Classes="mono" Foreground="#C8D0DC" Text="{Binding Ascii}"/>
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </DockPanel>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>

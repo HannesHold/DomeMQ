@@ -1,0 +1,19 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="DomeMQ.Inspector.App"
+             RequestedThemeVariant="Dark">
+  <Application.Resources>
+    <SolidColorBrush x:Key="Ink">#E7ECF5</SolidColorBrush>
+    <SolidColorBrush x:Key="Muted">#8B95A8</SolidColorBrush>
+    <SolidColorBrush x:Key="Panel">#1C2030</SolidColorBrush>
+    <SolidColorBrush x:Key="Line">#2C3348</SolidColorBrush>
+    <SolidColorBrush x:Key="Accent">#6CB6FF</SolidColorBrush>
+    <SolidColorBrush x:Key="Warning">#F0B429</SolidColorBrush>
+    <SolidColorBrush x:Key="Good">#3DDC97</SolidColorBrush>
+    <SolidColorBrush x:Key="Bad">#FF6B7A</SolidColorBrush>
+  </Application.Resources>
+  <Application.Styles>
+    <FluentTheme />
+    <StyleInclude Source="avares://DomeMQ.Inspector/Styles/Inspector.axaml"/>
+  </Application.Styles>
+</Application>

@@ -42,6 +42,9 @@ public sealed class ChannelStatistics
     public long ClearedMessages { get; init; }
 
     public bool WarningActive { get; init; }
+
+    /// <summary>Public id of the connection that created the channel.</summary>
+    public string Owner { get; init; } = "";
 }
 
 public sealed class BrokerStatistics

@@ -1,0 +1,63 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:views="using:DomeMQ.Inspector.Views"
+        x:Class="DomeMQ.Inspector.Views.MainWindow"
+        Title="DomeMQ Inspector"
+        Width="1320" Height="860"
+        MinWidth="1040" MinHeight="680"
+        WindowStartupLocation="CenterScreen"
+        Background="#16181F">
+  <Grid ColumnDefinitions="240,*">
+    <Border Background="#101218" Padding="18,20">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Top" Spacing="6" Margin="0,0,0,18">
+          <TextBlock Text="DomeMQ" FontSize="24" FontWeight="SemiBold"/>
+          <TextBlock Text="Inspector" Classes="muted"/>
+          <Border Classes="pill" Margin="0,10,0,0">
+            <TextBlock Text="{Binding ModeLabel}" FontSize="12"/>
+          </Border>
+        </StackPanel>
+        <StackPanel Spacing="4">
+          <Button Classes="nav" Classes.selected="{Binding IsOverview}" Content="Overview" Command="{Binding ShowPageCommand}" CommandParameter="overview" IsVisible="{Binding IsServer}"/>
+          <Button Classes="nav" Classes.selected="{Binding IsClients}" Content="Clients" Command="{Binding ShowPageCommand}" CommandParameter="clients" IsVisible="{Binding IsServer}"/>
+          <Button Classes="nav" Classes.selected="{Binding IsChannels}" Content="Channels" Command="{Binding ShowPageCommand}" CommandParameter="channels" IsVisible="{Binding IsServer}"/>
+          <Button Classes="nav" Classes.selected="{Binding IsConnect}" Content="Connect" Command="{Binding ShowPageCommand}" CommandParameter="connect" IsVisible="{Binding IsClient}"/>
+          <Button Classes="nav" Classes.selected="{Binding IsSend}" Content="Send / Stress" Command="{Binding ShowPageCommand}" CommandParameter="send" IsVisible="{Binding IsClient}"/>
+          <Button Classes="nav" Classes.selected="{Binding IsReceive}" Content="Receive" Command="{Binding ShowPageCommand}" CommandParameter="receive" IsVisible="{Binding IsClient}"/>
+          <Button Classes="nav" Classes.selected="{Binding IsTests}" Content="Tests" Command="{Binding ShowPageCommand}" CommandParameter="tests" IsVisible="{Binding IsClient}"/>
+          <Button Classes="nav" Classes.selected="{Binding IsTraffic}" Content="Hex log" Command="{Binding ShowPageCommand}" CommandParameter="traffic" IsVisible="{Binding IsServer}"/>
+          <Button Classes="nav" Classes.selected="{Binding IsTraffic}" Content="Hex log" Command="{Binding ShowPageCommand}" CommandParameter="traffic" IsVisible="{Binding IsClient}"/>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+    <Panel Grid.Column="1" Margin="22">
+      <Panel IsVisible="{Binding IsStart}">
+        <views:StartView/>
+      </Panel>
+      <Panel IsVisible="{Binding IsOverview}">
+        <views:OverviewView DataContext="{Binding Server}"/>
+      </Panel>
+      <Panel IsVisible="{Binding IsClients}">
+        <views:ClientsView DataContext="{Binding Server}"/>
+      </Panel>
+      <Panel IsVisible="{Binding IsChannels}">
+        <views:ChannelsView DataContext="{Binding Server}"/>
+      </Panel>
+      <Panel IsVisible="{Binding IsConnect}">
+        <views:ConnectView DataContext="{Binding Client}"/>
+      </Panel>
+      <Panel IsVisible="{Binding IsSend}">
+        <views:SendView DataContext="{Binding Client}"/>
+      </Panel>
+      <Panel IsVisible="{Binding IsReceive}">
+        <views:ReceiveView DataContext="{Binding Client}"/>
+      </Panel>
+      <Panel IsVisible="{Binding IsTests}">
+        <views:TestsView DataContext="{Binding Client}"/>
+      </Panel>
+      <Panel IsVisible="{Binding IsTraffic}">
+        <views:TrafficView DataContext="{Binding Traffic}"/>
+      </Panel>
+    </Panel>
+  </Grid>
+</Window>

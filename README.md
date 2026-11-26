@@ -15,6 +15,7 @@ The broker runs embedded in a process, as a standalone executable, or as a Linux
 - Queue overflow policies: reject, discard the newest, discard the oldest, or clear the channel. Message, byte, per-client, and server memory caps are separate. Crossing 80% raises a pressure event.
 - IP allow lists and block lists, including CIDR ranges, with a per-listener override and a periodic reload.
 - Configuration in `appsettings.json` or `domemq.json`, overridden by environment variables and `--config`.
+- A separate Inspector app for a live server dashboard, a stress client, scenario tests, and a hex traffic log. See [docs/inspector.md](docs/inspector.md).
 
 ## Requirements
 
@@ -28,9 +29,11 @@ src/DomeMQ.Protocol    frame codec, messages, transports (no NuGet dependencies)
 src/DomeMQ.Client      client library
 src/DomeMQ.Server      embeddable broker
 src/DomeMQ.Broker      standalone host
+tools/DomeMQ.Inspector Avalonia server and client inspector
 tests/                 xUnit
 docs/protocol.md       language-independent protocol
 docs/configuration.md  every broker option and its default
+docs/inspector.md      inspector screens and traffic tap
 ```
 
 ## Quick start
