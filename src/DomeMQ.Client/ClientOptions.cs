@@ -70,13 +70,16 @@ public sealed class TlsClientOptions
 }
 
 /// <summary>
-/// Pins the server certificate. Set one or more of the SPKI hash and the certificate.
-/// Every value that is set must match. A certificate can be raw bytes, a file, or an environment variable.
+/// Pins the server certificate. Any listed SPKI hash may match. A certificate pin, when set, must also match.
+/// A certificate can be raw bytes, a file, or an environment variable.
 /// </summary>
 public sealed class ServerPinOptions
 {
-    /// <summary>SHA-256 of the server SubjectPublicKeyInfo, hex or base64.</summary>
+    /// <summary>One SHA-256 SPKI hash, or several separated by whitespace, commas, or semicolons. Hex or base64.</summary>
     public string? SpkiSha256 { get; set; }
+
+    /// <summary>More SHA-256 SPKI hashes, each hex or base64. Combined with <see cref="SpkiSha256"/>.</summary>
+    public List<string> SpkiSha256Hashes { get; set; } = [];
 
     /// <summary>Raw 32-byte SHA-256 of the server SubjectPublicKeyInfo.</summary>
     public byte[]? SpkiSha256Bytes { get; set; }

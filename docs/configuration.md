@@ -113,6 +113,18 @@ An embedded `new DomeMqOptions()` starts with an empty listener list. `DomeMqOpt
 
 ## Listeners
 
+One DomeMQ process hosts every enabled listener at the same time. The listeners share one set of channels and one set of queued messages. A client can create a channel on the loopback listener, another client can push to that channel through the TLS listener, and the owner can pop it over the Unix socket. Channel ownership belongs to the connection that created the channel, not to the listener it used.
+
+Limits, authentication tokens, the key list, and queue accounting are process-wide. Each listener chooses its own transport and bind address. These fields are per listener when set, and inherit the matching top-level section when null:
+
+| Field | When null |
+| --- | --- |
+| `MaxPayloadSize` | Inherits `Limits.MaxPayloadSize`. |
+| TCP socket fields (`NoDelay`, buffers, backlog, keepalive, linger) | Inherit the `Tcp` section. |
+| `DeleteStaleSocket`, `Permissions` | Inherit the `Unix` section. |
+| `Tls` | Inherits the whole top-level `Tls` object, including `KeyMode`, `KeyId`, and client-certificate rules. An object replaces that section. It does not merge, so repeat `ClientAuthorities` and `KeyMode` on the listener. |
+| `IpAccess` | Inherits the top-level `IpAccess` object. An object replaces it for this listener. The lists are not merged. Unix sockets are not subject to IP rules. |
+
 `Listeners` is a list. Each entry:
 
 | Property | Type | Meaning |
@@ -128,6 +140,49 @@ An embedded `new DomeMqOptions()` starts with an empty listener list. `DomeMqOpt
 | `DeleteStaleSocket`, `Permissions` | null or value | Null inherits `Unix`. |
 | `Tls` | object or null | Null inherits the top-level `Tls` object, including `KeyId`. A value replaces the whole section. TLS on a Unix listener is a startup error. |
 | `IpAccess` | object or null | Null inherits the top-level `IpAccess` object. A value **replaces** it for this listener. Lists are not merged. |
+
+The same process can expose a private plaintext port, a public TLS port, and a Unix socket. Messages pushed on any of them are visible to the channel owner on any of them.
+
+```json
+{
+  "Keys": [
+    {
+      "Id": "alpha",
+      "ServerName": "alpha.dome",
+      "PrivateKey": { "File": "/etc/domemq/alpha.key" },
+      "Certificate": { "File": "/etc/domemq/alpha.crt" }
+    }
+  ],
+  "Listeners": [
+    {
+      "Name": "local",
+      "Transport": "Tcp",
+      "Host": "127.0.0.1",
+      "Port": 5071,
+      "Tls": { "Enabled": false }
+    },
+    {
+      "Name": "edge",
+      "Transport": "Tcp",
+      "Host": "0.0.0.0",
+      "Port": 5671,
+      "Tls": {
+        "Enabled": true,
+        "KeyMode": "PerClient",
+        "RequireClientCertificate": true,
+        "ClientAuthorities": [ { "File": "/etc/domemq/ca.crt" } ]
+      }
+    },
+    {
+      "Name": "ipc",
+      "Transport": "UnixSocket",
+      "Path": "/run/domemq/domemq.sock"
+    }
+  ]
+}
+```
+
+`local` is plaintext TCP for processes on this machine. `Tls` is set to disabled on that listener so it stays plaintext even when another listener enables TLS. `edge` accepts connections on every interface, selects the server certificate from the SNI name (`PerClient`), and requires a client certificate signed by `ca.crt`. Its `Tls` object replaces the top-level section, so the mode and the client authorities are written there. `ipc` is a Unix domain socket for local processes. It has no TLS and no IP rules, and it inherits `Unix.DeleteStaleSocket` and `Unix.Permissions`. A channel created on `ipc` can be pushed from `edge` and popped by its owner on `local`.
 
 ## Limits
 

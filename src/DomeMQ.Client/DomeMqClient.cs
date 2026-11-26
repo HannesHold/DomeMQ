@@ -305,7 +305,7 @@ public sealed class DomeMqClient : IAsyncDisposable
         }
 
         var serverName = string.IsNullOrWhiteSpace(tls.ServerName) ? tls.TargetHost : tls.ServerName;
-        byte[]? pinnedSpki = null;
+        byte[][]? pinnedSpki = null;
         X509Certificate2? pinnedCertificate = null;
         if (tls.Pin is not null)
         {
@@ -329,8 +329,9 @@ public sealed class DomeMqClient : IAsyncDisposable
         };
     }
 
-    private static byte[]? ReadPinnedSpki(ServerPinOptions pin)
+    private static byte[][]? ReadPinnedSpki(ServerPinOptions pin)
     {
+        var hashes = new List<byte[]>();
         if (pin.SpkiSha256Bytes is { Length: > 0 } bytes)
         {
             if (bytes.Length != 32)
@@ -338,20 +339,36 @@ public sealed class DomeMqClient : IAsyncDisposable
                 throw new DomeMqException("Pinned SPKI SHA-256 must be 32 bytes.");
             }
 
-            return bytes;
+            hashes.Add(bytes);
         }
 
-        if (string.IsNullOrWhiteSpace(pin.SpkiSha256))
+        if (!string.IsNullOrWhiteSpace(pin.SpkiSha256))
         {
-            return null;
+            AddHashes(hashes, pin.SpkiSha256);
         }
 
-        if (!CertificatePin.TryParseSpkiSha256(pin.SpkiSha256, out var hash, out var error))
+        if (pin.SpkiSha256Hashes is not null)
         {
-            throw new DomeMqException(error);
+            foreach (var hash in pin.SpkiSha256Hashes)
+            {
+                AddHashes(hashes, hash);
+            }
         }
 
-        return hash;
+        return hashes.Count == 0 ? null : hashes.ToArray();
+    }
+
+    private static void AddHashes(List<byte[]> hashes, string text)
+    {
+        foreach (var token in text.Split([',', ';', ' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!CertificatePin.TryParseSpkiSha256(token, out var hash, out var error))
+            {
+                throw new DomeMqException(error);
+            }
+
+            hashes.Add(hash);
+        }
     }
 
     private static X509Certificate2? ReadPinnedCertificate(ServerPinOptions pin)

@@ -28,7 +28,7 @@
           </StackPanel>
           <TextBox PlaceholderText="SNI server name" Text="{Binding TargetHost}"/>
           <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
-            <TextBox PlaceholderText="Pinned SPKI SHA-256 (hex)" Text="{Binding PinSpki}"/>
+            <TextBox PlaceholderText="Pinned SPKI SHA-256 hashes" Text="{Binding PinSpki}"/>
             <TextBox Grid.Column="1" PlaceholderText="Pinned server certificate file" Text="{Binding PinCertificatePath}"/>
           </Grid>
           <Grid ColumnDefinitions="*,*" ColumnSpacing="8">

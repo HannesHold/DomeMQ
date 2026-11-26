@@ -106,7 +106,7 @@ await DomeMqClient.ConnectAsync(new DomeMqClientOptions
 });
 ```
 
-`ServerName` is the SNI value. `TargetHost` is the older name for the same field; `ServerName` wins when both are set. `Pin` accepts an SPKI SHA-256 (hex or base64, or raw 32 bytes in `SpkiSha256Bytes`) and a certificate (`CertificateFile`, `CertificateEnv`, or `CertificateBytes`). Every value that is set must match. A certificate pin compares thumbprints, so a reissued certificate fails even when the key is unchanged. An SPKI pin follows the key across reissue.
+`ServerName` is the SNI value. `TargetHost` is the older name for the same field; `ServerName` wins when both are set. `Pin` accepts SPKI SHA-256 hashes (hex or base64, or raw 32 bytes in `SpkiSha256Bytes`) and a certificate (`CertificateFile`, `CertificateEnv`, or `CertificateBytes`). Put several hashes in `SpkiSha256Hashes`, or in one `SpkiSha256` string separated by spaces, commas, or semicolons. The server key must match any one of them. A certificate pin, when set as well, must match too. A certificate pin compares thumbprints, so a reissued certificate fails even when the key is unchanged. An SPKI pin follows the key across reissue.
 
 `AllowUntrustedCertificates` skips chain and name checks. The pin is still enforced. Leave it false when the client trusts `ca.crt`.
 
@@ -252,6 +252,6 @@ secrets:
 
 `PerClient`: give the new certificate the same `ServerName` by replacing that entry's files, or add a new id, move `ServerName` onto it, and delete the old name from the old entry in the same edit. Two keys must not own the name at once.
 
-Clients that pin an SPKI keep working when the certificate is reissued with the same key. They fail when the key changes, until their pin is updated. Clients that pin the certificate thumbprint must be updated for every reissue. Ship the new `*.spki.sha256` or `*.crt` to those clients before, or together with, the server change. There is no second pin slot.
+Clients that pin an SPKI keep working when the certificate is reissued with the same key. When the key itself changes, list the current hash and the next hash together (`SpkiSha256Hashes`, or both hashes in `SpkiSha256`) so clients accept either certificate during the rollout. Remove the old hash after every client has reloaded. Clients that pin the certificate thumbprint must be updated for every reissue. Ship the new `*.spki.sha256` or `*.crt` to those clients before, or together with, the server change.
 
 `ca.key` stays offline. `ca.crt` changes only when you replace the authority, which also means reissuing every certificate it signed.

@@ -86,6 +86,37 @@ public class KeyModeTests
     }
 
     [Fact]
+    public async Task A_pin_accepts_either_of_two_spki_hashes()
+    {
+        using var directory = new TempDirectory();
+        using var current = TestCertificate.Create("only.dome", server: true);
+        using var next = TestCertificate.Create("next.dome", server: true);
+        var certPath = directory.Write("only.crt", current.CertificatePem);
+        var keyPath = directory.Write("only.key", current.PrivateKeyPem);
+        var options = BaseOptions();
+        options.Keys.Add(Named("only", keyPath, certPath, "only.dome"));
+        options.Tls.Enabled = true;
+        options.Tls.KeyMode = "PerServer";
+        options.Tls.KeyId = "only";
+        options.Listeners.Add(Listener("tcp"));
+        await using var broker = new DomeMqBroker(options);
+        await broker.StartAsync();
+        var port = PortOf(broker);
+        var currentHash = Convert.ToHexString(CertificatePin.SpkiSha256(current.Certificate)).ToLowerInvariant();
+        var nextHash = Convert.ToHexString(CertificatePin.SpkiSha256(next.Certificate)).ToLowerInvariant();
+
+        var overlap = Client(port, "only.dome", certificate: null);
+        overlap.Tls!.Pin = new ServerPinOptions { SpkiSha256 = currentHash + " " + nextHash };
+        await using var connected = await DomeMqClient.ConnectAsync(overlap);
+        Assert.False(string.IsNullOrEmpty(connected.SessionId));
+
+        var onlyNext = Client(port, "only.dome", certificate: null);
+        onlyNext.Tls!.Pin = new ServerPinOptions { SpkiSha256Hashes = [nextHash] };
+        var rejected = await Assert.ThrowsAnyAsync<Exception>(() => DomeMqClient.ConnectAsync(onlyNext));
+        Assert.Contains("pinned", rejected.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Per_server_ignores_the_client_server_name()
     {
         using var directory = new TempDirectory();

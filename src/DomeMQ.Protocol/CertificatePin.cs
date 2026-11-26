@@ -46,7 +46,7 @@ public static class CertificatePin
         X509Certificate? certificate,
         SslPolicyErrors errors,
         bool allowUntrusted,
-        byte[]? pinnedSpkiSha256,
+        IReadOnlyList<byte[]>? pinnedSpkiSha256,
         X509Certificate2? pinnedCertificate,
         out string failure)
     {
@@ -58,12 +58,22 @@ public static class CertificatePin
         }
 
         using var server = new X509Certificate2(certificate);
-        if (pinnedSpkiSha256 is not null)
+        if (pinnedSpkiSha256 is { Count: > 0 })
         {
             var actual = SpkiSha256(server);
-            if (!actual.AsSpan().SequenceEqual(pinnedSpkiSha256))
+            var match = false;
+            foreach (var hash in pinnedSpkiSha256)
             {
-                failure = "The server certificate does not match the pinned SPKI SHA-256.";
+                if (hash.AsSpan().SequenceEqual(actual))
+                {
+                    match = true;
+                    break;
+                }
+            }
+
+            if (!match)
+            {
+                failure = "The server certificate does not match any pinned SPKI SHA-256.";
                 return false;
             }
         }

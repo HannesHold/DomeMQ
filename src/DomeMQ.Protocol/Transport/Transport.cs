@@ -100,8 +100,8 @@ public sealed class TlsParameters
     /// <summary>Invoked for each accepted connection so the server certificate can be rotated without a restart.</summary>
     public Func<TlsListenerMaterial>? HandshakeSelector { get; init; }
 
-    /// <summary>SHA-256 of the server certificate SubjectPublicKeyInfo. The handshake fails when the peer key differs.</summary>
-    public byte[]? PinnedSpkiSha256 { get; init; }
+    /// <summary>SHA-256 hashes of acceptable server SubjectPublicKeyInfo values. The handshake fails when the peer key matches none of them.</summary>
+    public IReadOnlyList<byte[]>? PinnedSpkiSha256 { get; init; }
 
     /// <summary>Expected server certificate. The handshake fails when the peer certificate thumbprint differs.</summary>
     public X509Certificate2? PinnedCertificate { get; init; }
@@ -340,7 +340,7 @@ internal static class SocketSetup
 
         var stream = new NetworkStream(socket, ownsSocket: true);
         string? pinFailure = null;
-        var pin = tls.PinnedSpkiSha256 is not null || tls.PinnedCertificate is not null;
+        var pin = tls.PinnedSpkiSha256 is { Count: > 0 } || tls.PinnedCertificate is not null;
         RemoteCertificateValidationCallback? validate = pin
             ? (_, certificate, _, errors) =>
             {

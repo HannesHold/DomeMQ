@@ -6,7 +6,7 @@ The broker runs embedded in a process, as a standalone executable, or as a Linux
 
 ## Features
 
-- TCP and Unix domain sockets on Linux and Windows 10 or later, through the same socket API.
+- TCP and Unix domain sockets on Linux and Windows 10 or later, through the same socket API. One process can bind several listeners at once. They share the same channels, so a push on one listener can be popped on another. See [docs/configuration.md](docs/configuration.md).
 - Extension points for UDP, KCP, and shared memory. Those factories are registered and throw until an implementation is plugged in.
 - Channels owned by the connection that created them. Anyone can push. Only the owner can pop or delete.
 - Fixed 16-byte little-endian header and a custom binary body. Application payloads are raw bytes.
