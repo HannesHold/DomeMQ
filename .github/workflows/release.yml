@@ -12,6 +12,10 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -39,16 +43,30 @@ jobs:
             dotnet pack "$project" -c Release -o artifacts -p:Version="${{ steps.version.outputs.version }}" --nologo
           done
 
-      - name: Publish NuGet packages
+      - name: Decide whether to publish NuGet packages
+        id: nuget
         env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          NUGET_USER: ${{ secrets.NUGET_USER }}
         run: |
-          if [ -z "$NUGET_API_KEY" ]; then
-            echo "NUGET_API_KEY is not set; skipping NuGet publish."
-            exit 0
+          if [ -z "$NUGET_USER" ]; then
+            echo "NUGET_USER is not set; skipping NuGet publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: NuGet login
+        if: steps.nuget.outputs.publish == 'true'
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Publish NuGet packages
+        if: steps.nuget.outputs.publish == 'true'
+        run: |
           dotnet nuget push artifacts/*.nupkg \
-            --api-key "$NUGET_API_KEY" \
+            --api-key ${{ steps.login.outputs.NUGET_API_KEY }} \
             --source https://api.nuget.org/v3/index.json \
             --skip-duplicate
 
@@ -121,4 +139,4 @@ jobs:
             "dist/DomeMQ-Inspector-$ver-win-x64.zip" \
             "dist/DomeMQ-Inspector-$ver-linux-x64.zip" \
             --title "DomeMQ $GITHUB_REF_NAME" \
-            --notes "DomeMQ ${ver}. Container ghcr.io/${{ steps.version.outputs.image }}:${ver}. NuGet packages use the same version when NUGET_API_KEY is configured. Inspector zips are self-contained win-x64 and linux-x64 folders."
+            --notes "DomeMQ ${ver}. Container ghcr.io/${{ steps.version.outputs.image }}:${ver}. NuGet packages use the same version when NUGET_USER is configured. Inspector zips are self-contained win-x64 and linux-x64 folders."
