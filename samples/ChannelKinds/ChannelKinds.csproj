@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>DomeMQ.Samples.ChannelKinds</RootNamespace>
+    <AssemblyName>ChannelKinds</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <Description>Show queue, stack, and bag pop order, batches, and a single owner.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\DomeMQ.Client\DomeMQ.Client.csproj" />
+    <ProjectReference Include="..\..\src\DomeMQ.Server\DomeMQ.Server.csproj" />
+  </ItemGroup>
+</Project>

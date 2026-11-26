@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>DomeMQ.Samples.TlsPinning</RootNamespace>
+    <AssemblyName>TlsPinning</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <Description>Pin a PerServer certificate by its SPKI SHA-256.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\DomeMQ.Client\DomeMQ.Client.csproj" />
+    <ProjectReference Include="..\..\src\DomeMQ.Server\DomeMQ.Server.csproj" />
+  </ItemGroup>
+</Project>

@@ -115,7 +115,7 @@ Do not insert fields in the middle. Do not change the width of an existing field
 
 ## Channels
 
-A channel is a named buffer owned by the connection that created it.
+A channel is a named buffer owned by the connection that created it. Pop order, batches, timeouts, and overflow for each kind are described in [channels.md](channels.md).
 
 | Kind | Value | Push | Pop |
 | --- | ---: | --- | --- |

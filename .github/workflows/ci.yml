@@ -18,8 +18,11 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
+      - name: Build
+        run: dotnet build DomeMQ.sln -c Release --nologo
+
       - name: Test
-        run: dotnet test DomeMQ.sln -c Release --nologo
+        run: dotnet test DomeMQ.sln -c Release --no-build --nologo
 
       - name: Build inspector
         run: dotnet build tools/DomeMQ.Inspector/DomeMQ.Inspector.csproj -c Release --nologo

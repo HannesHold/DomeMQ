@@ -12,11 +12,11 @@ The broker runs embedded in a process, as a standalone executable, or as a Linux
 
 - TCP and Unix domain sockets on Linux and Windows 10 or later, through the same socket API. One process can bind several listeners at once. They share the same channels, so a push on one listener can be popped on another. See [docs/configuration.md](docs/configuration.md).
 - Extension points for UDP, KCP, and shared memory. Those factories are registered and throw until an implementation is plugged in.
-- Channels owned by the connection that created them. Anyone can push. Only the owner can pop or delete.
+- Channels owned by the connection that created them. Anyone can push. Only the owner can pop or delete. Queue, stack, and bag semantics are in [docs/channels.md](docs/channels.md).
 - Fixed 16-byte little-endian header and a custom binary body. Application payloads are raw bytes.
 - Optional TLS on TCP. One key for the whole server, or one key per client selected by SNI. Keys come from an environment variable or a file and can be rotated without a restart. See [docs/keys.md](docs/keys.md).
 - Payload limits at server, listener, channel, and per-call scope. The effective limit is the minimum of the levels that are set.
-- Queue overflow policies: reject, discard the newest, discard the oldest, or clear the channel. Message, byte, per-client, and server memory caps are separate. Crossing 80% raises a pressure event.
+- Queue overflow policies: reject, discard the newest, discard the oldest, or clear the channel. Message, byte, per-client, and server memory caps are separate. Crossing 80% raises a pressure event. See [docs/channels.md](docs/channels.md).
 - IP allow lists and block lists, including CIDR ranges, with a per-listener override and a periodic reload.
 - Configuration in `appsettings.json` or `domemq.json`, overridden by environment variables and `--config`.
 - A separate Inspector app for a live server dashboard, a stress client, scenario tests, and a hex traffic log. See [docs/inspector.md](docs/inspector.md).
@@ -34,14 +34,19 @@ src/DomeMQ.Client      client library
 src/DomeMQ.Server      embeddable broker
 src/DomeMQ.Broker      standalone host
 tools/DomeMQ.Inspector Avalonia server and client inspector
+samples/               runnable console programs (not packed)
 tests/                 xUnit
 docs/protocol.md       language-independent protocol
+docs/channels.md       queue, stack, and bag behavior
+docs/examples.md       compilable client and broker examples
 docs/configuration.md  every broker option and its default
 docs/keys.md           creating, pinning, and rotating TLS keys
 docs/inspector.md      inspector screens and traffic tap
 ```
 
 ## Quick start
+
+Compilable programs for embedding, TLS, channel kinds, and overflow are in [docs/examples.md](docs/examples.md) and `samples/`.
 
 ### Standalone executable
 

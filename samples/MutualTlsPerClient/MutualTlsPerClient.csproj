@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>DomeMQ.Samples.MutualTlsPerClient</RootNamespace>
+    <AssemblyName>MutualTlsPerClient</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <Description>Select a server certificate by SNI and require a client certificate.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\DomeMQ.Client\DomeMQ.Client.csproj" />
+    <ProjectReference Include="..\..\src\DomeMQ.Server\DomeMQ.Server.csproj" />
+  </ItemGroup>
+</Project>

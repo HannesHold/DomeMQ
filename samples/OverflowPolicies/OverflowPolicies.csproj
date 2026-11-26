@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>DomeMQ.Samples.OverflowPolicies</RootNamespace>
+    <AssemblyName>OverflowPolicies</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <Description>Show full policies, create-limit errors 16 and 19, push errors 17 and 18, and QueuePressure.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\DomeMQ.Client\DomeMQ.Client.csproj" />
+    <ProjectReference Include="..\..\src\DomeMQ.Server\DomeMQ.Server.csproj" />
+  </ItemGroup>
+</Project>

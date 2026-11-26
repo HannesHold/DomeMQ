@@ -26,7 +26,7 @@ Start embeds `DomeMqBroker`. An empty config path uses the defaults (TCP `0.0.0.
 
 Overview shows messages per second, bytes per second, queued bytes against `MaxQueuedBytes`, errors counted from `Error` frames, a throughput chart, the `QueuePressure` log, and a short config summary (listeners, TLS key id, limits, IP rules).
 
-Clients lists each accepted connection: endpoint, connect time, client-certificate subject when the listener asked for one, the server key id chosen for that handshake, and messages and bytes in each direction. Channels lists name, type, owner id, count against the max, bytes, a fill bar that turns amber at 80%, the full policy, and the dropped and cleared counters.
+Clients lists each accepted connection: endpoint, connect time, client-certificate subject when the listener asked for one, the server key id chosen for that handshake, and messages and bytes in each direction. Channels lists name, type, owner id, count against the max, bytes, a fill bar that turns amber at 80%, the full policy, and the dropped and cleared counters. Kind, ownership, and overflow are described in [channels.md](channels.md).
 
 ![Server overview](images/inspector/server-overview.png)
 

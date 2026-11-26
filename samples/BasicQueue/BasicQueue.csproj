@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>DomeMQ.Samples.BasicQueue</RootNamespace>
+    <AssemblyName>BasicQueue</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <Description>Embed a broker and exchange one queue over TCP and a Unix socket.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\DomeMQ.Client\DomeMQ.Client.csproj" />
+    <ProjectReference Include="..\..\src\DomeMQ.Server\DomeMQ.Server.csproj" />
+  </ItemGroup>
+</Project>

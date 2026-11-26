@@ -337,6 +337,8 @@ The client library has its own `HeartbeatInterval` (default 30 seconds), `Reques
 
 ## Channels
 
+Runtime behavior of `Queue`, `Stack`, and `Bag` is in [channels.md](channels.md).
+
 | Property | Default | Meaning |
 | --- | --- | --- |
 | `DefaultType` | `Queue` | Used when `CreateChannel` sends type 0. Also `Stack` or `Bag`. |
