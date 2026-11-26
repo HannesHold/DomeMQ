@@ -168,8 +168,9 @@ public static class KeyGenerator
         if (request.Format is KeyGenFormat.Pfx or KeyGenFormat.Both)
         {
             var pfxPath = Path.Combine(directory, name + ".pfx");
-            var collection = new X509Certificate2Collection { persisted, ca };
-            File.WriteAllBytes(pfxPath, collection.ExportPkcs12(Pkcs12ExportPbeParameters.Pbes2Aes256Sha256, request.Password ?? ""));
+            using var caPublic = X509CertificateLoader.LoadCertificate(ca.Export(X509ContentType.Cert));
+            var collection = new X509Certificate2Collection { persisted, caPublic };
+            File.WriteAllBytes(pfxPath, collection.ExportPkcs12(Pkcs12ExportPbeParameters.Pbes2Aes256Sha256, string.IsNullOrEmpty(request.Password) ? null : request.Password));
             if (request.Format == KeyGenFormat.Pfx)
             {
                 certificatePath = pfxPath;
@@ -199,7 +200,7 @@ public static class KeyGenerator
     private static X509Certificate2 Persist(X509Certificate2 certificate)
     {
         var exported = certificate.Export(X509ContentType.Pkcs12);
-        return X509CertificateLoader.LoadPkcs12(exported, password: null);
+        return X509CertificateLoader.LoadPkcs12(exported, password: null, X509KeyStorageFlags.Exportable);
     }
 
     private static bool IsSafeName(string name) =>
