@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>DomeMQ.Broker</RootNamespace>
+    <AssemblyName>DomeMQ.Broker</AssemblyName>
+    <Description>Standalone DomeMQ broker host.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\DomeMQ.Server\DomeMQ.Server.csproj" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.15" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.15" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.15" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.15" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.CommandLine" Version="10.0.15" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.15" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,102 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Version from the tag
+        id: version
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          echo "version=${ver}" >> "$GITHUB_OUTPUT"
+          echo "image=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        run: dotnet test DomeMQ.sln -c Release --nologo
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: 1
+          DOTNET_NOLOGO: 1
+
+      - name: Pack NuGet packages
+        run: |
+          mkdir -p artifacts
+          for project in src/DomeMQ.Protocol src/DomeMQ.Client src/DomeMQ.Server; do
+            dotnet pack "$project" -c Release -o artifacts -p:Version="${{ steps.version.outputs.version }}" --nologo
+          done
+
+      - name: Publish NuGet packages
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [ -z "$NUGET_API_KEY" ]; then
+            echo "NUGET_API_KEY is not set; skipping NuGet publish."
+            exit 0
+          fi
+          dotnet nuget push artifacts/*.nupkg \
+            --api-key "$NUGET_API_KEY" \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate
+
+      - name: Publish self-contained executables
+        run: |
+          ver="${{ steps.version.outputs.version }}"
+          mkdir -p dist
+          for rid in win-x64 linux-x64 linux-arm64; do
+            out="dist/publish-$rid"
+            stage="dist/DomeMQ-$ver-$rid"
+            rm -rf "$out" "$stage"
+            dotnet publish src/DomeMQ.Broker/DomeMQ.Broker.csproj \
+              -c Release \
+              -r "$rid" \
+              --self-contained true \
+              -p:PublishSingleFile=true \
+              -p:IncludeNativeLibrariesForSelfExtract=true \
+              -p:Version="$ver" \
+              -o "$out"
+            mkdir -p "$stage"
+            cp -a "$out"/. "$stage"/
+            cp src/DomeMQ.Broker/appsettings.json "$stage/appsettings.json"
+            (cd dist && zip -r "DomeMQ-$ver-$rid.zip" "DomeMQ-$ver-$rid")
+          done
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push the container
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: VERSION=${{ steps.version.outputs.version }}
+          tags: ghcr.io/${{ steps.version.outputs.image }}:${{ steps.version.outputs.version }}
+
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ver="${{ steps.version.outputs.version }}"
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/DomeMQ-$ver-win-x64.zip" \
+            "dist/DomeMQ-$ver-linux-x64.zip" \
+            "dist/DomeMQ-$ver-linux-arm64.zip" \
+            --title "DomeMQ $GITHUB_REF_NAME" \
+            --notes "DomeMQ ${ver}. Container ghcr.io/${{ steps.version.outputs.image }}:${ver}. NuGet packages use the same version when NUGET_API_KEY is configured."

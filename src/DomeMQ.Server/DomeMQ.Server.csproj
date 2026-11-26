@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>DomeMQ.Server</RootNamespace>
+    <AssemblyName>DomeMQ.Server</AssemblyName>
+    <Description>Embeddable DomeMQ broker. No third-party dependencies.</Description>
+    <PackageId>DomeMQ.Server</PackageId>
+    <PackageTags>domemq;ipc;broker;server</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\DomeMQ.Protocol\DomeMQ.Protocol.csproj" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <InternalsVisibleTo Include="DomeMQ.Server.Tests" />
+  </ItemGroup>
+</Project>

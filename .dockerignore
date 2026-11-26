@@ -1,0 +1,12 @@
+**/.git
+**/.vs
+**/.idea
+**/bin
+**/obj
+**/TestResults
+**/*.user
+docs
+.github
+tests
+*.md
+!src/DomeMQ.Broker/appsettings.json

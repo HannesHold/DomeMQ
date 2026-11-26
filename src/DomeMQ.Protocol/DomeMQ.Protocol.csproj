@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>DomeMQ</RootNamespace>
+    <AssemblyName>DomeMQ.Protocol</AssemblyName>
+    <Description>Frame codec, message bodies, and transport abstractions for the DomeMQ IPC protocol. No third-party dependencies.</Description>
+    <PackageId>DomeMQ.Protocol</PackageId>
+    <PackageTags>domemq;ipc;protocol;tcp;unix-socket</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+</Project>

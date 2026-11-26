@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>DomeMQ.Client</RootNamespace>
+    <AssemblyName>DomeMQ.Client</AssemblyName>
+    <Description>Client library for the DomeMQ IPC message broker. No third-party dependencies.</Description>
+    <PackageId>DomeMQ.Client</PackageId>
+    <PackageTags>domemq;ipc;client;tcp;unix-socket</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\DomeMQ.Protocol\DomeMQ.Protocol.csproj" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+</Project>
