@@ -206,24 +206,6 @@ Payload limits default to 16 MiB globally. Listener, channel, and per-message li
 dotnet test DomeMQ.sln -c Release
 ```
 
-## Versioning and releases
-
-The repository version in `Directory.Build.props` is `0.1.0`. A tag `v*` (for example `v0.1.0`) builds that same version into:
-
-- the container `ghcr.io/<owner>/<repo>:<version>` (lowercase)
-- the NuGet packages, when the `NUGET_USER` secret is present (the job skips publish and succeeds when the secret is missing)
-- a GitHub Release containing the self-contained executables
-
-NuGet publish uses [Trusted Publishing](https://aka.ms/nuget/trusted-publishing). The workflow asks GitHub for an OIDC token (`id-token: write`) and `NuGet/login` exchanges it for a short-lived API key. No long-lived NuGet key is stored in the repository.
-
-1. On nuget.org, create a Trusted Publishing policy for the account that owns the packages:
-   - Repository owner: `HannesHold`
-   - Repository: `DomeMQ`
-   - Workflow file: `release.yml`
-2. In this GitHub repository, add an Actions secret `NUGET_USER` set to that nuget.org username.
-
-A tag push then packs `DomeMQ.Protocol`, `DomeMQ.Client`, and `DomeMQ.Server` and pushes them to `https://api.nuget.org/v3/index.json`.
-
 ## License
 
 MIT. See [LICENSE](LICENSE). Copyright (c) 2026 Hannes Hold.
