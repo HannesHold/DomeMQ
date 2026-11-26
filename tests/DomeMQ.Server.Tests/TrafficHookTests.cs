@@ -68,25 +68,55 @@ public class TrafficHookTests
             HeartbeatInterval = TimeSpan.Zero,
             TrafficObserver = observer
         });
-        Assert.Contains(observer.Chunks, chunk => chunk.Direction == TrafficDirection.Outbound && chunk.Data.Length > 0);
-        Assert.Contains(observer.Chunks, chunk => chunk.Direction == TrafficDirection.Inbound && chunk.Data.Length > 0);
+        var chunks = observer.Snapshot();
+        Assert.Contains(chunks, chunk => chunk.Direction == TrafficDirection.Outbound && chunk.Data.Length > 0);
+        Assert.Contains(chunks, chunk => chunk.Direction == TrafficDirection.Inbound && chunk.Data.Length > 0);
     }
 
     private sealed class RecordingConnections : IBrokerConnectionObserver
     {
+        private readonly Lock _gate = new();
+
         public List<BrokerConnectionSnapshot> Connected { get; } = [];
 
         public List<string> Disconnected { get; } = [];
 
-        public void OnConnected(BrokerConnectionSnapshot snapshot) => Connected.Add(snapshot);
+        public void OnConnected(BrokerConnectionSnapshot snapshot)
+        {
+            lock (_gate)
+            {
+                Connected.Add(snapshot);
+            }
+        }
 
-        public void OnDisconnected(string id) => Disconnected.Add(id);
+        public void OnDisconnected(string id)
+        {
+            lock (_gate)
+            {
+                Disconnected.Add(id);
+            }
+        }
     }
 
     private sealed class CollectingObserver : ITrafficObserver
     {
-        public List<TrafficChunk> Chunks { get; } = [];
+        private readonly Lock _gate = new();
+        private readonly List<TrafficChunk> _chunks = [];
 
-        public void OnChunk(TrafficChunk chunk) => Chunks.Add(chunk);
+        public void OnChunk(TrafficChunk chunk)
+        {
+            lock (_gate)
+            {
+                _chunks.Add(chunk);
+            }
+        }
+
+        public TrafficChunk[] Snapshot()
+        {
+            lock (_gate)
+            {
+                return _chunks.ToArray();
+            }
+        }
     }
 }
